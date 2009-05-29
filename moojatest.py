@@ -1,3 +1,20 @@
+#!/usr/bin/env python
+#    moojatest.py - test cases for Mooja
+#    Copyright (C) 2009 Shawn Sulma <mooja@470th.org>
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import unittest
 from collections import defaultdict, deque
 try :
@@ -14,9 +31,16 @@ class DefaultTestCase(unittest.TestCase):
             expected = data
         _marshal = marshal( data )
         jsoned = json.dumps( _marshal, indent = 2 )
+        print "JSON size", len(jsoned)
         unjsoned = json.loads( jsoned )
-        _unmarshal = unmarshal( unjsoned )
+        try :
+            _unmarshal = unmarshal( unjsoned )
+        except ValueError :
+            print jsoned
+            raise
         result = _unmarshal
+        if ( repr(result) != repr( expected ) ) :
+            print jsoned
         assert ( repr( result ) == repr( expected ) )
         return result
 
@@ -150,6 +174,10 @@ class MoojaTests( DefaultTestCase ) :
         data.present = "yes it is"
         self._perform( data )
 
+    def testModule ( self ) :
+        """Test marshalling a reference to a module."""
+        self._perform( unittest )
+
     def testUnsupportedIterator ( self ) :
         """Ensure iterators raise the correct exception"""
         data = list( "abcdefg" ).__iter__()
@@ -272,5 +300,7 @@ class Test_ReverseFork ( Test_DA, Test_D2 ) :
     def __repr__ ( self ) :
         return "<TestReverseFork: %s>" % list( self )
 
+import time
 if __name__ == "__main__":
+    #mooja.USE_GC_REDUCTION = False
     unittest.main()

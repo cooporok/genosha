@@ -1,30 +1,88 @@
-#!/usr/bin/env python
+#    mooja.py - Marshalling Objects On J(A)son
+#    Copyright (C) 2009 Shawn Sulma <mooja@470th.org>
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+r"""MOOJA (Marshalling Objects Over J(A)son) is a wrapper around the :mod:`json`
+(or :mod:`simplejson`) modules that provides :mod:`pickle`-like capabilities, using JSON
+<http://json.org> as the underlying serialization mechanism.
+
+JSON (JavaScript Object Notation) is a lightweight data interchange format.  When python
+objects are serialized using JSON, they are expressed as a dict of a subset of their
+attributes (essentially the non-callable ones).  This is phenomenally useful in most cases.
+No attempt is made to be able to reconstruct the original objects from JSON. When you
+`loads` from a JSON source, you get a pile of primitive sequences and maps.
+
+Mooja introduces the ability to serialize python objects in a manner similar to the
+:mod:`pickle` module, where unpickling returns you to the original objects.  The public
+interface should be very familiar to anyone who has used the :mod:`json`, :mod:`pickle`
+or mod:`marshal` modules.  Marshalling objects this way is somewhat more
+human-readable and mutable than pickles are.
+
+Like :mod:`pickle` there are limitations to what it is capable of.  The limitations are
+amazingly similar.  The following types of objects cannot be marshalled using Mooja:
+
+ - generators;
+ - iterators;
+ - closures;
+ - lambdas;
+ - functions and classes that are not visible in the top level of their module;
+ - class methods decorated as @staticmethod;
+ - old-style classes (mostly because they're going away and they're not really necessary any longer)
+ - extension types unless they play very nicely
+
+Mooja output is necessarily more complex than ordinary JSON text.  Like the :mod:`json`
+module, you pass in a single object (or a list/tuple/dict of objects; that list is still itself
+only a single object).  The JSON output contains a JSON-list with two elements:
+
+    1. a list of mooja-marshalled objects.
+    2. the object reference of the 'root' object passed into the dump/dumps call.
+
+The mooja-marshalled objects are each represented by a dict containing special entries
+that identify the type of object it is, any items or attributes of note, and its object-id.
+Within one of these marshalled objects, all references to other (non-primitive) objects
+(e.g. instances in a list, or attributes of an instance) are converted to special
+mooja-references (strings in a special format pointing at another mooja-marshalled object).
+
+When mooja output is loaded, the objects are reconstituted based on the stored types,
+and their references are restored.
+
+The creation of the serialization structures is performed in memory; the output is not
+streamable.  Once all the mooja dictionaries are created, this structure is passed into
+the json module (or simplejson if it is available), and the result returned.
+
+"""
 from collections import defaultdict, deque
-import sys, types, inspect, time, gc
+import sys, types, inspect
 try :
     import simplejson as json
 except :
     import json
+try :
+    import gc
+except : # pypy and jython may not have gc module.  This is okay.
+    gc = None
 
 __description__ = "mooja.py - Marshal Objects Over J(A)son"
 # or maybe pyjomo or majis or jasma or pymojo or pymoja
 
-DEBUG = __name__ == "__main__"
-
-def log( s ) :
-    print s
+__all__ = [ 'marshal', 'unmarshal', 'dumps', 'dump', 'loads', 'load' ]
 
 def marshal( o ) :
-    _marshal = JSON_Marshaller( o )
-    if DEBUG :
-        log( "<marshal> " + str( _marshal.details ) )
-    return _marshal.result()
+    return JSON_Marshaller().marshal( o )
 
 def unmarshal( o ) :
-    _unmarshal = JSON_Unmarshaller( o )
-    if DEBUG :
-        log( "<unmarshal> " + str( _unmarshal.details ) )
-    return _unmarshal.payload
+    return JSON_Unmarshaller().unmarshal( o )
 
 def dumps ( o, indent = 2 ) :
     json.dumps( marshal(o), indent = indent )
@@ -39,7 +97,7 @@ def load ( f ) :
     return unmarshal( json.load( f ) )
 
 SEP = "@"
-SENTINEL = SEP + "mooja" + SEP
+SENTINEL = SEP + "mooja:1" + SEP
 CLASS = SEP + "c"
 OID = SEP + "id"
 FIELDS = SEP + "f"
@@ -48,59 +106,41 @@ ATTRIBUTE = SEP + "a"
 OBJECT = SEP + "o" + SEP
 ESCAPED = SEP + SEP
 
+USE_GC_REDUCTION = True
+# hack to get <type 'cell'> which is not visible in python code ordinarily.
+def _ ( obj ) :
+    def __ ( o ) :
+        return o + obj
+    return __
+_ = _( 0 )
+CellType = type( _.func_closure[0] )
+
 class JSON_Marshaller ( object ) :
-    def __init__ ( self, target ) :
-        md = 0
+    def marshal( self, obj ) :
         self.objects = [ SENTINEL ]
         self.oids = set()
         self.python_ids = {}
-        self.next_id = 1
         self.deferred = deque()
-        start = time.time()
-        self.gc = gc.isenabled()
-        gc.disable()
+        self.gc = gc and gc.isenabled()
+        gc and gc.disable()
         try :
-            self.payload = self.marshal( target )
+            payload = self._marshal( obj, root = True )
             while len( self.deferred ) > 0 :
-                md = max( md, len( self.deferred ) )
-                self.marshal_object_data( *self.deferred.popleft() )
+                self._object( *self.deferred.popleft() )
+            return [ self.objects, payload ]
         finally :
-            garbage = len( gc.garbage )
-            if self.gc :
-                gc.enable()
-            if DEBUG :
-                self.details = { 'time_taken' : time.time() - start, 'max_deferred' : md, 'num_objects' : len( self.objects ), 'garbage' : garbage }
+            self.gc and gc.enable()
 
-    def get_id( self, obj ) :
-        _id = self.python_ids.setdefault( id( obj ), self.next_id )
-        if _id == self.next_id :
-            self.next_id += 1
-        return _id
+    def _id ( self, obj ) :
+        return self.python_ids.setdefault( id( obj ), len( self.python_ids ) + 1 )
 
-    def reference( self, oid ) :
+    def _reference ( self, oid ) :
         return OBJECT + str( oid )+ SEP
 
-    def _dict ( self, d, itermethod = dict.items ) :
-        return dict( ( self.marshal( key ), self.marshal( value ) ) for key, value in itermethod( d ) )
+    def _items ( self, obj, cls, iterator, simple = True ) :
+        return cls( self._marshal( item ) if simple else ( self._marshal( item[0] ), self._marshal( item[1] ) ) for item in iterator( obj ) )
 
-    def _list ( self, l, itermethod = list.__iter__ ) :
-        return [ self.marshal( item ) for item in itermethod( l ) ]
-
-    def marshal_object ( self, obj, items = None, immutable = False, cls = None, attributes = None, bound_to = None, binding_name = None ) :
-        oid = self.get_id( obj )
-        self.oids.add( oid )
-        cls = cls or obj.__class__
-        if not hasattr( sys.modules[cls.__module__], cls.__name__ ) :
-            raise TypeError, "%s.%s cannot be resolved. It may be dynamically-constructed; this is not supported." % ( cls.__module__, cls.__name__ )
-        out = { OID : oid, CLASS : "%s/%s" % ( cls.__module__, cls.__name__ ) }
-        if immutable :
-            self.marshal_object_data( obj, out, items, attributes )
-        else :
-            self.deferred.append( ( obj, out, items, attributes ) )
-        self.objects.append( out )
-        return self.reference( oid )
-
-    def marshal_object_data( self, obj, out, items, attributes ) :
+    def _object ( self, obj, out, items, attributes ) :
         if items is not None :
             if hasattr( items, '__call__' ) :
                 items = items()
@@ -113,37 +153,56 @@ class JSON_Marshaller ( object ) :
         if attributes :
             fields.update( attributes )
         if len( fields ) > 0 :
-            out[FIELDS] = self._dict( fields, dict.items )
+            out[FIELDS] = self._items( fields, dict, dict.items, simple = False )
 
-    def marshal_list ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._list( obj ) )
-
-    def marshal_tuple ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._list( obj, tuple.__iter__ ), immutable = True )
-
-    def marshal_dict ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._dict( obj ) )
-
-    def marshal_set ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._list( obj, set.__iter__ ) )
-
-    def marshal_frozenset ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._list( obj, frozenset.__iter__ ), immutable = True )
-
-    def marshal_defaultdict ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._dict( obj, defaultdict.items ), attributes = { 'default_factory' : obj.default_factory } )
-
-    def marshal_deque ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._list( obj, deque.__iter__, ) )
-
-    def marshal_instancemethod ( self, obj ) :
-        oid = self.get_id( obj )
-        self.oids.add( oid )
-        out = { OID : oid, OBJECT : self.marshal( obj.im_self ), ATTRIBUTE : obj.im_func.func_name }
+    def marshal_object ( self, obj, items = None, immutable = False, cls = None, attributes = None, root = False ) :
+        cls = cls or obj.__class__
+        if cls.__name__ and not hasattr( sys.modules[cls.__module__], cls.__name__ ) :
+            raise TypeError, "%s.%s cannot be resolved. Dynamic construction is not supported." % ( cls.__module__, cls.__name__ )
+        out = { CLASS : "%s/%s" % ( cls.__module__, cls.__name__ ) }
+        immediate = USE_GC_REDUCTION and gc and ( not root ) and self._referrers( obj ) <= 1
+        if not immediate :
+            oid = self._id( obj )
+            self.oids.add( oid )
+            out[OID] = oid
+        if immutable or immediate :
+            self._object( obj, out, items, attributes )
+            if immediate :
+                return out
+        else :
+            self.deferred.append( ( obj, out, items, attributes ) )
         self.objects.append( out )
-        return self.reference( oid )
+        return self._reference( oid )
 
-    def marshal_function ( self, obj ) :
+    def marshal_list ( self, obj, root = False ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, list.__iter__ ), root = root )
+
+    def marshal_tuple ( self, obj, root = False ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, tuple.__iter__ ), immutable = True, root = root )
+
+    def marshal_dict ( self, obj, root = False ) :
+        return self.marshal_object( obj, lambda: self._items( obj, dict, dict.items, simple = False ), root = root )
+
+    def marshal_set ( self, obj, root = False ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, set.__iter__ ), root = root )
+
+    def marshal_frozenset ( self, obj, root = False ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, frozenset.__iter__ ), immutable = True, root = root )
+
+    def marshal_defaultdict ( self, obj, root = False ) :
+        return self.marshal_object( obj, lambda: self._items( obj, dict, defaultdict.items, simple = False ), attributes = { 'default_factory' : obj.default_factory }, root = root )
+
+    def marshal_deque ( self, obj, root = False ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, deque.__iter__, ), root = root )
+
+    def marshal_instancemethod ( self, obj, root = False ) :
+        oid = self._id( obj )
+        self.oids.add( oid )
+        out = { OID : oid, OBJECT : self._marshal( obj.im_self ), ATTRIBUTE : obj.im_func.func_name }
+        self.objects.append( out )
+        return self._reference( oid )
+
+    def marshal_function ( self, obj, root = False ) :
         if obj.__name__ == "<lambda>" :
             raise TypeError, "lambdas are not supported."
         if obj.func_closure :
@@ -151,41 +210,53 @@ class JSON_Marshaller ( object ) :
         if not getattr( sys.modules[obj.__module__], obj.__name__, None ) :
             if hasattr( obj, 'next' ) and hasattr( getattr( obj, 'next' ), '__call__' ) and hasattr( obj, '__iter__' ) and obj == obj.__iter__() :
                 raise TypeError, "iterators are not supported."
-            raise TypeError, "function %s is a dynamic function. This is not supported." % obj.__name__
-        return self.marshal_object( obj, cls = obj )
+            raise TypeError, "function '%s' is not visible in module '%s'. Subscoped functions are not supported." % ( obj.__name__, obj.__module__ )
+        return self.marshal_object( obj, cls = obj, root = root )
 
-    def marshal_type ( self, obj ) :
-        return self.marshal_object( obj, cls = obj )
+    def marshal_type ( self, obj, root = False ) :
+        return self.marshal_object( obj, cls = obj, root = root )
 
-    def marshal_str( self, obj ) :
+    def marshal_module ( self, obj, root = False ) :
+        oid = self._id( obj )
+        self.oids.add( oid )
+        out = { OID : oid, CLASS : obj.__name__ }
+        self.objects.append( out )
+        return self._reference( oid )
+
+    def marshal_str( self, obj, root = False ) :
         if obj.startswith( SEP ) : # needs escaping
             obj = obj[0] + obj # keeps the type the same without messiness
         return obj
 
     marshal_unicode = marshal_basestring = marshal_str
     primitives = set( [ int, long, float, bool, types.NoneType ] )
-    builtin_types = set( [list, tuple, set, frozenset, dict, defaultdict, deque, object, type, types.FunctionType, types.MethodType, str, unicode, basestring ] )
     unsupported = set( [ types.GeneratorType, types.InstanceType ] )
+    builtin_types = set( [list, tuple, set, frozenset, dict, defaultdict, deque, object, type
+        , types.FunctionType, types.MethodType, str, unicode, basestring, types.ModuleType ] )
 
-    def marshal ( self, obj ) :
+    def _marshal ( self, obj, root = False ) :
         if type( obj ) in self.unsupported :
             raise TypeError, "'%s' is an unsupported type." % type( obj ).__name__
-        oid = self.get_id( obj )
+        oid = self._id( obj )
         if oid in self.oids :
-            return self.reference( oid )
+            return self._reference( oid )
         if type( obj ) in self.primitives :
             return obj
         for cls in inspect.getmro( obj.__class__ ) :
             if cls in self.builtin_types :
-                return getattr( self, "marshal_" + cls.__name__ )( obj )
-        return self.marshal_object( obj )
+                return getattr( self, "marshal_" + cls.__name__ )( obj, root = root )
+        return self.marshal_object( obj, root = root )
 
-    def result( self ) :
-        return [ self.objects, self.payload ]
+    frame_types = ( types.FrameType, CellType ) # needed? , types.ModuleType )
+    def _referrers( self, obj ) :
+        l = 0
+        for e in gc.get_referrers( obj ) :
+            if type( e ) not in self.frame_types :
+                l += 1
+        return l
 
 class JSON_Unmarshaller ( object ) :
-    def __init__ ( self, obj ) :
-        start = time.time()
+    def unmarshal ( self, obj ) :
         self.objects = {}
         self.to_populate = []
         try :
@@ -193,30 +264,38 @@ class JSON_Unmarshaller ( object ) :
                 raise ValueError, "Malfomed input."
         except IndexError :
             raise ValueError, "Malformed input."
-        self.unmarshal( obj[0][1:] ) # load the referenced objects
-        self.payload = self.unmarshal( obj[1] )
+        self._unmarshal( obj[0][1:] ) # load the referenced objects
+        payload = self._unmarshal( obj[1] )
         for obj in self.to_populate :
             self.populate_object( *obj )
         del self.to_populate
-        if DEBUG :
-            self.details = { 'time_taken' : time.time() - start, 'num_objects' : len( self.objects ) }
+        return payload
 
     builders = { list : list.extend, set : set.update, dict : dict.update, defaultdict : dict.update, deque : deque.extend }
     immutables = set( [ tuple, frozenset ] )
 
     def create_object ( self, data ) :
-        oid = data[OID]
+        immediate = OID not in data
+        if not immediate :
+            oid = data[OID]
+            #if not immediate :
+            #    return self.objects.setdefault( oid, attribute )
+        if ATTRIBUTE not in data :
+            cls = self.resolve_type( *data[CLASS].split('/') )
         if ATTRIBUTE in data :
-            return self.objects.setdefault( oid, getattr( self.unmarshal( data[OBJECT] ), data[ATTRIBUTE] ) )
-        cls = self.resolve_type( *data[CLASS].split('/') )
-        if ITEMS not in data and FIELDS not in data :
-            self.objects[oid] = cls # raw type
-            return cls
-        if self.immutables & set ( inspect.getmro( cls ) ) :
-            obj = cls.__new__( cls, self.unmarshal( data[ITEMS] ) )
+            obj = getattr( self._unmarshal( data[OBJECT] ), data[ATTRIBUTE] )
+        elif ITEMS not in data and FIELDS not in data :
+            obj = cls # raw type
+        elif self.immutables & set ( inspect.getmro( cls ) ) :
+            obj = cls.__new__( cls, self._unmarshal( data[ITEMS] ) )
         else :
             obj = cls.__new__( cls )
-            self.to_populate.append( ( obj, data ) )
+            if immediate :
+                self.populate_object( obj, data )
+            else :
+                self.to_populate.append( ( obj, data ) )
+        if immediate :
+            return obj
         self.objects[oid] = obj
         return obj
 
@@ -224,42 +303,42 @@ class JSON_Unmarshaller ( object ) :
         if ITEMS in data :
             for base in inspect.getmro( obj.__class__ ) :
                 if base in self.builders :
-                    self.builders[ base ]( obj, self.unmarshal( data[ITEMS] ) )
+                    self.builders[ base ]( obj, self._unmarshal( data[ITEMS] ) )
                     break
-            # if no builder :
-            #    raise TypeError, "** no builder for " + str( obj.__class__ )
         if FIELDS in data :
             if hasattr( obj, '__dict__' ) :
-                try :
-                    obj.__dict__.update( self.unmarshal( data[FIELDS] ) )
-                except TypeError :
-                    raise
-            else :
+                obj.__dict__.update( self._unmarshal( data[FIELDS] ) )
+            else :  # __slots__ based
                 for key, value in data[FIELDS].items() :
-                    setattr( obj, self.unmarshal( key ), self.unmarshal( value ) )
+                    setattr( obj, self._unmarshal( key ), self._unmarshal( value ) )
         return obj
 
-    def unmarshal ( self, data ) :
+    def _unmarshal ( self, data ) :
         if type ( data ) == list :
-            return [ self.unmarshal( item ) for item in data ]
+            return [ self._unmarshal( item ) for item in data ]
         if type ( data ) == dict :
-            if OID in data :
+            if OID in data or CLASS in data :
                 return self.create_object( data )
-            return dict( ( self.unmarshal( key ), self.unmarshal( value ) ) for key, value in data.items() )
+            return dict( ( self._unmarshal( key ), self._unmarshal( value ) ) for key, value in data.items() )
         if isinstance( data, basestring ) :
             if data.startswith( OBJECT ) and data.endswith( SEP ) :
                 try :
                     return self.objects[ int( data.split( SEP )[-2] ) ]
                 except KeyError :
                     raise ValueError, "Forward-references to objects not allowed:" + data
-                except :
-                    pass
             elif data.startswith( ESCAPED ) : # strip off the minimal escaping.
                 data = data[1:]
         return data
 
-    def resolve_type ( self, modname, clsname ) :
+    def resolve_type ( self, modname, clsname = None ) :
         __import__( modname )
         module = sys.modules[ modname ]
-        cls = getattr( module, clsname )
-        return cls
+        return getattr( module, clsname ) if clsname else module
+
+if __name__ == "__main__" :
+    l1 = list ( 'abc' )
+    l2 = list ( '123' )
+    l2.append( l1 )
+    l1.append( l2 )
+    l = [ 1, 2, [ 'a', 'b' ] ]
+    print marshal( l )
