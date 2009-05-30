@@ -13,6 +13,7 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# OR : GENOSHA - GENeric Object marSHAlling
 r"""MOOJA (Marshalling Objects Over J(A)son) is a wrapper around the :mod:`json`
 (or :mod:`simplejson`) modules that provides :mod:`pickle`-like capabilities, using JSON
 <http://json.org> as the underlying serialization mechanism.
@@ -79,16 +80,16 @@ __description__ = "mooja.py - Marshal Objects Over J(A)son"
 __all__ = [ 'marshal', 'unmarshal', 'dumps', 'dump', 'loads', 'load' ]
 
 def marshal( o ) :
-    return JSON_Marshaller().marshal( o )
+    return MoojaEncoder().marshal( o )
 
 def unmarshal( o ) :
-    return JSON_Unmarshaller().unmarshal( o )
+    return MoojaDecoder().unmarshal( o )
 
 def dumps ( o, indent = 2 ) :
-    json.dumps( marshal(o), indent = indent )
+    json.dumps( marshal(o), indent = indent, cls = MoojaToJSON )
 
 def dump ( o, f, indent = None ) :
-    json.dump( marshal(o), f, indent = indent )
+    json.dump( marshal(o), f, indent = indent, cls = MoojaToJSON )
 
 def loads ( s ) :
     return unmarshal( json.loads( s ) )
@@ -103,19 +104,67 @@ OID = SEP + "id"
 FIELDS = SEP + "f"
 ITEMS = SEP + "i"
 ATTRIBUTE = SEP + "a"
-OBJECT = SEP + "o" + SEP
-ESCAPED = SEP + SEP
+OBJECT = SEP + "o"
+#ESCAPED = SEP + SEP
+
+jsonmapper = { 'cls' : CLASS, 'oid' : OID, 'fields' : FIELDS, 'items' : ITEMS, 'attribute' : ATTRIBUTE, 'obj' : OBJECT, 'reference' : lambda oid : "<" + SEP +str(oid) + SEP + ">" }
 
 USE_GC_REDUCTION = True
 # hack to get <type 'cell'> which is not visible in python code ordinarily.
-def _ ( obj ) :
-    def __ ( o ) :
-        return o + obj
-    return __
-_ = _( 0 )
-CellType = type( _.func_closure[0] )
+CellType = type( ( lambda x : ( lambda y : x + y ) )( 0 ).func_closure[0] )
 
-class JSON_Marshaller ( object ) :
+class MoojaToJSON ( json.JSONEncoder ) :
+    def default ( self, obj ) :
+        if hasattr( obj, '_mooja_encode' ) :
+            return obj._mooja_encode( jsonmapper )
+        return json.JSONEncoder.default( self , obj )
+
+def json_to_mooja( data ) :
+    if OID in data or CLASS in data :
+        obj = MoojaObject()
+        obj._mooja_decode( data )
+        return obj
+    if isinstance( data, basestring ) and data.startswith( '<'+SEP ) and data.endswith( SEP+'>' ) :
+        try :
+            return MoojaReference( int( data.split( SEP )[-2] ) )
+        except :
+            pass
+    return data # fall back to returning the directory.
+
+def moojaFromJSON( *args, **kwargs ) :
+    return json.JSONDecoder( object_hook = json_to_mooja, *args, **kwargs )
+
+class MoojaObject ( object ) :
+    __slots__ = ( 'cls', 'oid', 'fields', 'items', 'attribute', 'obj' )
+    def __init__ ( self, **kwargs ) :
+        self.cls = self.oid = self.fields = self.items = self.attribute = self.obj = None
+        for k,v in kwargs.items() :
+            setattr( self, k, v )
+    def _mooja_encode ( self, mapper ) :
+        d = {}
+        for slot in self.__slots__ :
+            v = getattr( self, slot )
+            if v is not None :
+                d[mapper[slot]] = v
+        return d
+    def _mooja_decode ( self, data, mapper ) :
+        for slot in self.__slots__ :
+            k = mapper[slot]
+            if k in data :
+                setattr( self, slot, data[k] )
+        return self
+
+class MoojaReference ( object ) :
+    __slots__ = ( 'oid', )
+    def __init__ ( self, oid ) :
+        self.oid = oid
+    def _mooja_encode ( self, mapper ) :
+        return mapper['reference']( self.oid )
+    def _mooja_decode ( self, mapper ) :
+        self.oid = mapper['dereference']( oid )
+        return self.oid
+
+class MoojaEncoder ( object ) :
     def marshal( self, obj ) :
         self.objects = [ SENTINEL ]
         self.oids = set()
@@ -135,7 +184,7 @@ class JSON_Marshaller ( object ) :
         return self.python_ids.setdefault( id( obj ), len( self.python_ids ) + 1 )
 
     def _reference ( self, oid ) :
-        return OBJECT + str( oid )+ SEP
+        return MoojaReference( oid )
 
     def _items ( self, obj, cls, iterator, simple = True ) :
         return cls( self._marshal( item ) if simple else ( self._marshal( item[0] ), self._marshal( item[1] ) ) for item in iterator( obj ) )
@@ -144,7 +193,7 @@ class JSON_Marshaller ( object ) :
         if items is not None :
             if hasattr( items, '__call__' ) :
                 items = items()
-            out[ITEMS] = items
+            out.items = items
         fields = {}
         if hasattr( obj, '__dict__' ) :
             fields.update( item for item in obj.__dict__.items() if ( not item[0].startswith('__') ) and not hasattr( item[1], '__call__' ) )
@@ -153,18 +202,20 @@ class JSON_Marshaller ( object ) :
         if attributes :
             fields.update( attributes )
         if len( fields ) > 0 :
-            out[FIELDS] = self._items( fields, dict, dict.items, simple = False )
+            out.fields = self._items( fields, dict, dict.items, simple = False )
+        return out
 
     def marshal_object ( self, obj, items = None, immutable = False, cls = None, attributes = None, root = False ) :
         cls = cls or obj.__class__
         if cls.__name__ and not hasattr( sys.modules[cls.__module__], cls.__name__ ) :
             raise TypeError, "%s.%s cannot be resolved. Dynamic construction is not supported." % ( cls.__module__, cls.__name__ )
-        out = { CLASS : "%s/%s" % ( cls.__module__, cls.__name__ ) }
+        out = MoojaObject()
+        out.cls = "%s/%s" % ( cls.__module__, cls.__name__ )
         immediate = USE_GC_REDUCTION and gc and ( not root ) and self._referrers( obj ) <= 1
         if not immediate :
             oid = self._id( obj )
             self.oids.add( oid )
-            out[OID] = oid
+            out.oid = oid
         if immutable or immediate :
             self._object( obj, out, items, attributes )
             if immediate :
@@ -172,7 +223,7 @@ class JSON_Marshaller ( object ) :
         else :
             self.deferred.append( ( obj, out, items, attributes ) )
         self.objects.append( out )
-        return self._reference( oid )
+        return MoojaReference( oid )
 
     def marshal_list ( self, obj, root = False ) :
         return self.marshal_object( obj, lambda: self._items( obj, list, list.__iter__ ), root = root )
@@ -198,9 +249,9 @@ class JSON_Marshaller ( object ) :
     def marshal_instancemethod ( self, obj, root = False ) :
         oid = self._id( obj )
         self.oids.add( oid )
-        out = { OID : oid, OBJECT : self._marshal( obj.im_self ), ATTRIBUTE : obj.im_func.func_name }
+        out = MoojaObject( oid = oid, obj = self._marshal( obj.im_self ), attribute = obj.im_func.func_name )
         self.objects.append( out )
-        return self._reference( oid )
+        return MoojaReference( oid )
 
     def marshal_function ( self, obj, root = False ) :
         if obj.__name__ == "<lambda>" :
@@ -219,17 +270,17 @@ class JSON_Marshaller ( object ) :
     def marshal_module ( self, obj, root = False ) :
         oid = self._id( obj )
         self.oids.add( oid )
-        out = { OID : oid, CLASS : obj.__name__ }
+        out = MoojaObject( oid = oid, cls = obj.__name__ )
         self.objects.append( out )
-        return self._reference( oid )
+        return MoojaReference( oid )
 
-    def marshal_str( self, obj, root = False ) :
-        if obj.startswith( SEP ) : # needs escaping
-            obj = obj[0] + obj # keeps the type the same without messiness
-        return obj
+    #def marshal_str( self, obj, root = False ) :
+    #    if obj.startswith( SEP ) : # needs escaping
+    #        obj = obj[0] + obj # keeps the type the same without messiness
+    #    return obj
 
-    marshal_unicode = marshal_basestring = marshal_str
-    primitives = set( [ int, long, float, bool, types.NoneType ] )
+    #marshal_unicode = marshal_basestring = marshal_str
+    primitives = ( int, long, float, bool, types.NoneType, unicode, str, basestring )
     unsupported = set( [ types.GeneratorType, types.InstanceType ] )
     builtin_types = set( [list, tuple, set, frozenset, dict, defaultdict, deque, object, type
         , types.FunctionType, types.MethodType, str, unicode, basestring, types.ModuleType ] )
@@ -239,8 +290,8 @@ class JSON_Marshaller ( object ) :
             raise TypeError, "'%s' is an unsupported type." % type( obj ).__name__
         oid = self._id( obj )
         if oid in self.oids :
-            return self._reference( oid )
-        if type( obj ) in self.primitives :
+            return MoojaReference( oid )
+        if isinstance( obj, self.primitives ) : # type( obj ) in self.primitives :
             return obj
         for cls in inspect.getmro( obj.__class__ ) :
             if cls in self.builtin_types :
@@ -255,7 +306,7 @@ class JSON_Marshaller ( object ) :
                 l += 1
         return l
 
-class JSON_Unmarshaller ( object ) :
+class MoojaDecoder ( object ) :
     def unmarshal ( self, obj ) :
         self.objects = {}
         self.to_populate = []
@@ -278,8 +329,6 @@ class JSON_Unmarshaller ( object ) :
         immediate = OID not in data
         if not immediate :
             oid = data[OID]
-            #if not immediate :
-            #    return self.objects.setdefault( oid, attribute )
         if ATTRIBUTE not in data :
             cls = self.resolve_type( *data[CLASS].split('/') )
         if ATTRIBUTE in data :
@@ -321,13 +370,13 @@ class JSON_Unmarshaller ( object ) :
                 return self.create_object( data )
             return dict( ( self._unmarshal( key ), self._unmarshal( value ) ) for key, value in data.items() )
         if isinstance( data, basestring ) :
-            if data.startswith( OBJECT ) and data.endswith( SEP ) :
+            if data.startswith( "<" + SEP ) and data.endswith( SEP + ">" ) :
                 try :
                     return self.objects[ int( data.split( SEP )[-2] ) ]
                 except KeyError :
                     raise ValueError, "Forward-references to objects not allowed:" + data
-            elif data.startswith( ESCAPED ) : # strip off the minimal escaping.
-                data = data[1:]
+            #elif data.startswith( ESCAPED ) : # strip off the minimal escaping.
+            #    data = data[1:]
         return data
 
     def resolve_type ( self, modname, clsname = None ) :
