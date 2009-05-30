@@ -30,7 +30,7 @@ class DefaultTestCase(unittest.TestCase):
         if not expected :
             expected = data
         _marshal = marshal( data )
-        jsoned = json.dumps( _marshal, indent = 2 )
+        jsoned = json.dumps( _marshal, indent = 2, cls = mooja.MoojaToJSON )
         print "JSON size", len(jsoned)
         unjsoned = json.loads( jsoned )
         try :
@@ -38,9 +38,14 @@ class DefaultTestCase(unittest.TestCase):
         except ValueError :
             print jsoned
             raise
+        except TypeError :
+            print jsoned
+            raise
         result = _unmarshal
         if ( repr(result) != repr( expected ) ) :
+            print expected
             print jsoned
+            print result
         assert ( repr( result ) == repr( expected ) )
         return result
 
