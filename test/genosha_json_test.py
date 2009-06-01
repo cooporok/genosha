@@ -1,6 +1,6 @@
 #!/usr/bin/env python
-#    moojatest.py - test cases for Mooja
-#    Copyright (C) 2009 Shawn Sulma <mooja@470th.org>
+#    genoshatest.py - test cases for Genosha over JSON
+#    Copyright (C) 2009 Shawn Sulma <genosha@470th.org>
 #
 #    This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -17,35 +17,28 @@
 
 import unittest
 from collections import defaultdict, deque
-try :
-    import simplejson as json
-except :
-    import json
 
-from mooja import marshal, unmarshal
-import mooja
+import genosha
+from genosha.json import marshal, unmarshal, dumps, loads
 
 class DefaultTestCase(unittest.TestCase):
     def _perform( self, data, expected = None ) :
         if not expected :
             expected = data
-        _marshal = marshal( data )
-        jsoned = json.dumps( _marshal, indent = 2, cls = mooja.MoojaToJSON )
+        jsoned = dumps( data, indent = 2 )
         print "JSON size", len(jsoned)
-        unjsoned = json.loads( jsoned )
         try :
-            _unmarshal = unmarshal( unjsoned )
+            result = loads( jsoned )
         except ValueError :
             print jsoned
             raise
         except TypeError :
             print jsoned
             raise
-        result = _unmarshal
         if ( repr(result) != repr( expected ) ) :
-            print expected
+            print ">>", expected
             print jsoned
-            print result
+            print "<<", result
         assert ( repr( result ) == repr( expected ) )
         return result
 
@@ -61,7 +54,7 @@ class DefaultTestCase(unittest.TestCase):
     def runTest( self ) :
         pass
 
-class MoojaTests( DefaultTestCase ) :
+class GenoshaTests( DefaultTestCase ) :
     def testPrimitives ( self ) :
         """Test the marshalling of simple primitives"""
         data = [ 1, 2L, 3.0, "string", u"unicode", True, None, ( "tuple", ) ]
@@ -170,7 +163,7 @@ class MoojaTests( DefaultTestCase ) :
 
     def testEscape ( self ) :
         """Test a string that should require escaping"""
-        data = mooja.OBJECT + "1" + mooja.SEP
+        data = "<@1@>"
         self._perform( data )
 
     def testSlots ( self ) :
@@ -182,6 +175,10 @@ class MoojaTests( DefaultTestCase ) :
     def testModule ( self ) :
         """Test marshalling a reference to a module."""
         self._perform( unittest )
+
+    def testReferenceAsKey( self ) :
+        data = { 'a': 1, Test_A() : 2 }
+        self._perform( data )
 
     def testUnsupportedIterator ( self ) :
         """Ensure iterators raise the correct exception"""
@@ -305,7 +302,9 @@ class Test_ReverseFork ( Test_DA, Test_D2 ) :
     def __repr__ ( self ) :
         return "<TestReverseFork: %s>" % list( self )
 
-import time
+import time, sys
 if __name__ == "__main__":
-    #mooja.USE_GC_REDUCTION = False
+    if '+gc' in sys.argv :
+        del sys.argv[sys.argv.index('+gc')]
+        genosha.USE_GC_REDUCTION = True
     unittest.main()
