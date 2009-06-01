@@ -62,8 +62,7 @@ def loads ( s ) :
 def load ( f ) :
     return unmarshal( json.load( f, object_hook = _json_to_genosha ) )
 
-_jsonmap = ( ( 'cls', "@c" ), ( 'oid', "@id" ), ( 'fields', "@f" ), ( 'items', "@i" ), ( 'attribute', "@a" ), ( 'obj', "@o" ) )
-#_jsonunmap = tuple( ( e[1], e[0] ) for e in _jsonmap )
+_jsonmap = ( ( 'type', "@t" ), ( 'oid', "@id" ), ( 'fields', "@f" ), ( 'items', "@i" ), ( 'attribute', "@a" ), ( 'instance', "@o" ) )
 _jsonunmap = dict( ( e[1], e[0] ) for e in _jsonmap )
 
 def _genosha_to_json( obj ) :
@@ -78,7 +77,7 @@ def _genosha_to_json( obj ) :
     raise TypeError, repr( obj.__class__ )
 
 def _json_to_genosha( data ) :
-    if "@o" in data or "@c" in data :
+    if "@o" in data or "@t" in data :
         #return GenoshaObject( **dict( ( to, data[fr] ) for fr, to in _jsonunmap if fr in data ) )
         return GenoshaObject( **dict( ( _jsonunmap[k], v ) for k, v in data.items() ) )
     return data # fall back to returning the directory.
