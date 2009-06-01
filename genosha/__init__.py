@@ -186,10 +186,13 @@ class GenoshaEncoder ( object ) :
         self.objects.append( out )
         return self.reference_hook( oid )
 
+    def marshal_complex ( self, obj, root = False ) :
+        return self.marshal_object( obj, root = root, items = lambda: str( obj )[1:-1] )
+
     primitives = set( [int, long, float, bool, types.NoneType, unicode, str, basestring] )
     unsupported = set( [ types.GeneratorType, types.InstanceType ] )
     builtin_types = set( [list, tuple, set, frozenset, dict, defaultdict, deque, object, type
-        , types.FunctionType, types.MethodType, types.ModuleType ] )
+        , types.FunctionType, types.MethodType, types.ModuleType, complex ] )
 
     def _marshal ( self, obj, root = False ) :
         if id( obj ) in self.python_ids :
@@ -231,7 +234,7 @@ class GenoshaDecoder ( object ) :
         return payload
 
     builders = { list : list.extend, set : set.update, dict : dict.update, defaultdict : dict.update, deque : deque.extend }
-    immutables = set( [ tuple, frozenset ] )
+    immutables = set( [ tuple, frozenset, complex ] )
 
     def create_object ( self, data ) :
         immediate = not hasattr( data, 'oid' )
