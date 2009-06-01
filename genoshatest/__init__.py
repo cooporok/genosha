@@ -158,6 +158,10 @@ class GenoshaTests( DefaultTestCase ) :
         data = { 'a': 1, Test_A() : 2 }
         self._perform( data )
 
+    def testComplex ( self ) :
+        data = complex( 20, 0.3 )
+        self._perform( data )
+
     def testUnsupportedIterator ( self ) :
         """Ensure iterators raise the correct exception"""
         data = list( "abcdefg" ).__iter__()
