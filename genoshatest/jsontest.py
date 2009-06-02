@@ -16,6 +16,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import time, sys, unittest
 
+import genosha
 from genosha.JSON import dumps, loads
 import genoshatest
 
@@ -30,4 +31,7 @@ if __name__ == "__main__":
     if '+gc' in sys.argv :
         del sys.argv[sys.argv.index('+gc')]
         genosha.USE_GC_REDUCTION = True
+    if '+scope' in sys.argv :
+        del sys.argv[sys.argv.index('+scope')]
+        genosha.SIMPLE_SCOPING = True
     unittest.main()

@@ -24,11 +24,18 @@ similar.  The following types of objects cannot be marshalled using Genosha:
  - iterators;
  - closures;
  - lambdas;
- - functions and classes that are not visible in the top level of their module;
- - class methods decorated as @staticmethod;
+ - functions and classes that are not visible in the top level of their module[*];
  - old-style classes (mostly because they're going away and they're not really necessary any longer)
  - extension types unless they play very nicely
  - pathologically-complex definitions
+
+( [*] = some of these are technically supported, if they are defined within class scopes,
+but the marshalling mechanism here is a little naive and may be confused if there are
+multiple inner classes in a module with the same name; there is no way to identify which
+definition is the real one. Genosha assumes it's the first one it finds; in many cases there
+will only be one, and this is good. "Namespaces are good, let's do more of those"... Yes,
+they would have been helpful here. You can disable this behaviour by setting
+genosha.SIMPLE_SCOPING to True )
 
 The genosha-marshalled objects are each represented by a dict containing special entries
 that identify the type of object it is, any items or attributes of note, and its object-id.
@@ -52,12 +59,18 @@ except : # pypy and jython may not have gc module.  This is okay.
     gc = None
 
 # default use of garbage collector reduction techniques is disabled.
-# It is several times slower and offers minimal size and readability improvements.
+# It is several times slower and offers minimal size improvement.
 USE_GC_REDUCTION = False
 # hack to get <type 'cell'> which is not visible in python code ordinarily.
 CellType = type( ( lambda x : ( lambda y : x + y ) )( 0 ).func_closure[0] )
 
+# special value to indicate the version of genosha object structure used.
 SENTINEL = "@genosha:1@"
+
+# allows inner classes (and @staticmethods) to be seen at scopes other than module-level.
+# enabled there is the possibility of confusion if multiple inner classes exist in a module
+# with the same name.  Set this to True to prevent inner classes from marshalling.
+SIMPLE_SCOPING = False
 
 class GenoshaObject ( object ) :
     __slots__ = ( 'type', 'oid', 'fields', 'items', 'attribute', 'instance' )
@@ -104,7 +117,7 @@ class GenoshaEncoder ( object ) :
     def _items ( self, obj, typename, iterator, simple = True ) :
         return typename( self._marshal( item ) if simple else ( self._marshal( item[0] ), self._marshal( item[1] ) ) for item in iterator( obj ) )
 
-    def _object ( self, obj, out, items, attributes ) :
+    def _object ( self, obj, out, items, attributes, is_instance ) :
         if items is not None :
             out.items = items()
         fields = {}
@@ -114,26 +127,26 @@ class GenoshaEncoder ( object ) :
             fields.update( ( slot, getattr( obj, slot ) ) for slot in obj.__slots__ if (not slot.startswith('__')) and hasattr( obj, slot ) and not hasattr( getattr( obj, slot ), '__call__' ) )
         if attributes :
             fields.update( attributes )
-        if len( fields ) > 0 :
+        if is_instance :
             out.fields = self._items( fields, dict, dict.items, simple = False )
         return out
 
     def marshal_object ( self, obj, items = None, immutable = False, typename = None, attributes = None, root = False ) :
-        typename = typename or obj.__class__
-        if typename.__name__ and not hasattr( sys.modules[typename.__module__], typename.__name__ ) :
-            raise TypeError, "%s.%s cannot be resolved. Dynamic construction is not supported." % ( typename.__module__, typename.__name__ )
-        out = self.object_hook( type = "%s/%s" % ( typename.__module__, typename.__name__ ) )
+        is_instance = not typename
+        if not isinstance( typename, basestring ) :
+            typename = self.find_type( typename or obj.__class__ )
+        out = self.object_hook( type = typename )
         immediate = USE_GC_REDUCTION and gc and ( not root ) and self._referrers( obj ) <= 1
         if not immediate :
             oid = self._id( obj )
             self.oids.add( oid )
             out.oid = oid
         if immutable or immediate :
-            self._object( obj, out, items, attributes )
+            self._object( obj, out, items, attributes, is_instance )
             if immediate :
                 return out
         else :
-            self.deferred.append( ( obj, out, items, attributes ) )
+            self.deferred.append( ( obj, out, items, attributes, is_instance ) )
         self.objects.append( out )
         return self.reference_hook( oid )
 
@@ -170,11 +183,13 @@ class GenoshaEncoder ( object ) :
             raise TypeError, "lambdas are not supported."
         if obj.func_closure :
             raise TypeError, "closures are not supported."
-        if not getattr( sys.modules[obj.__module__], obj.__name__, None ) :
+        st = self.find_type( obj )
+        #print st
+        if not st : # getattr( sys.modules[obj.__module__], obj.__name__, None ) :
             if hasattr( obj, 'next' ) and hasattr( getattr( obj, 'next' ), '__call__' ) and hasattr( obj, '__iter__' ) and obj == obj.__iter__() :
                 raise TypeError, "iterators are not supported."
             raise TypeError, "function '%s' is not visible in module '%s'. Subscoped functions are not supported." % ( obj.__name__, obj.__module__ )
-        return self.marshal_object( obj, typename = obj, root = root )
+        return self.marshal_object( obj, typename = st, root = root )
 
     def marshal_type ( self, obj, root = False ) :
         return self.marshal_object( obj, typename = obj, root = root )
@@ -205,6 +220,25 @@ class GenoshaEncoder ( object ) :
             if typename in self.builtin_types :
                 return getattr( self, "marshal_" + typename.__name__ )( obj, root = root )
         return self.marshal_object( obj, root = root )
+
+    def find_type ( self, obj ) :
+        scopes = self.find_definition( obj, obj.__name__, sys.modules[obj.__module__], [] )
+        if scopes :
+            return "%s/%s" % ( scopes[0], ".".join( scopes[1:] ) )
+        raise TypeError, "%s.%s cannot be resolved. Nested scopes are not supported." % ( obj.__module__, obj.__name__ )
+
+    scoping_types = frozenset( [ types.TypeType, types.FunctionType ] )
+    def find_definition ( self, obj, name, parent, seen ) :
+        if name in parent.__dict__ and getattr( parent, name ) is obj :
+            return [ parent.__name__, name ]
+        if not SIMPLE_SCOPING :
+            seen.append( parent )
+            for k, v in parent.__dict__.items() :
+                if type( v ) in self.scoping_types and v not in seen :
+                    d = self.find_definition( obj, name, v, seen ) # this recursion is ok; it should normally never go more than a couple of levels.
+                    if d :
+                        return [ parent.__name__ ] + d
+        return None
 
     frame_types = set( [ types.FrameType, CellType ] ) # needed? , types.ModuleType )
     def _referrers( self, obj ) :
@@ -296,10 +330,12 @@ class GenoshaDecoder ( object ) :
     def _unmarshal ( self, data ) :
         return self.dispatch[type(data)]( self, data )
 
-    def resolve_type ( self, modname, typename = None ) :
+    def resolve_type ( self, modname, typename = '' ) :
         __import__( modname )
-        module = sys.modules[ modname ]
-        return getattr( module, typename ) if typename else module
+        scope = sys.modules[ modname ]
+        for name in typename.split('.') :
+            scope = getattr( scope, name ) if name else scope
+        return scope
 
 if __name__ == "__main__" :
     l1 = list ( 'abc' )
