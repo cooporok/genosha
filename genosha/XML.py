@@ -76,8 +76,7 @@ def encode_object ( parent, data, tag = None ) :
         encode_element( e, data.fields, tag = 'fields' )
 
 def encode_reference ( parent, data, tag = None ) :
-    e = ET.SubElement( parent, tag or 'reference' )
-    e.set( 'oid', str( data.oid ) )
+    ET.SubElement( parent, tag or 'reference' ).set( 'oid', str( data.oid ) )
 
 def encode_list ( parent, data, tag = None ) :
     e = ET.SubElement( parent, tag or 'list' )
@@ -114,13 +113,9 @@ def decode_object ( element ) :
         if numattr in keys :
             setattr( obj, numattr, int( element.get( numattr ) ) )
     for child in element :
-        if child.tag == 'instance' :
-            obj.instance = decode_element( child )
-        elif child.tag == 'items' :
-            obj.items = decode_element( child )
-        elif child.tag == 'fields' :
-            obj.fields = decode_element( child )
-        else :
+        try :
+            setattr( obj, child.tag, decode_element( child ) )
+        except AttributeError :
             raise ValueError, "unknown <object> data: " + child.tag
     return obj
 

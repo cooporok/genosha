@@ -122,11 +122,11 @@ class GenoshaTests( DefaultTestCase ) :
         result = self._perform( data )
         assert( result( 2 ) == data( 2 ) )
 
-    def testUnsupportedStaticMethod ( self ) :
-        """Test marshalling of a @staticmethod raises correct exception"""
+    def testStaticMethod ( self ) :
+        """Test marshalling of a @staticmethod"""
         data = Test_A.staticmeth
-        result = self._unsupported( data )
-        assert( (not result) or result( 9 ) == data( 9 ) )
+        result = self._perform( data )
+        assert( result( 88 ) == data( 88 ) )
 
     def testInstanceMethod ( self ) :
         """Test marshal of instance method"""
@@ -140,7 +140,7 @@ class GenoshaTests( DefaultTestCase ) :
         self._perform( data )
 
     def testEscape ( self ) :
-        """Test a string that should require escaping"""
+        """Test a string that should require escaping (in representations where references are stored as strings)."""
         data = "<@1@>"
         self._perform( data )
 
@@ -160,6 +160,10 @@ class GenoshaTests( DefaultTestCase ) :
 
     def testComplex ( self ) :
         data = complex( 20, 0.3 )
+        self._perform( data )
+
+    def testDescriptors ( self ) :
+        data = Test_Descriptee()
         self._perform( data )
 
     def testUnsupportedIterator ( self ) :
@@ -197,12 +201,21 @@ class GenoshaTests( DefaultTestCase ) :
         data = OldStyle( 1 )
         self._unsupported( data )
 
-    def testUnsupportedInnerClass ( self ) :
-        """Ensure 'inner' classes raise the correct exception"""
+    def testUnsupportedDynamicClass ( self ) :
+        """Ensure dynamic/meta classes raise the correct exception"""
         class Inner ( object ) :
             pass
         data = Inner()
         self._unsupported( data )
+
+    def testInnerClass ( self ) :
+        """Ensure inner classes of other classes can be resolved."""
+        data = Test_Outer.Test_Inner
+        self._perform( data )
+
+    def testInnerClassInstance ( self ) :
+        data = Test_Outer.Test_Inner()
+        self._perform( data )
 
 i=1
 
@@ -284,3 +297,23 @@ class Test_ReverseFork ( Test_DA, Test_D2 ) :
     def __repr__ ( self ) :
         return "<TestReverseFork: %s>" % list( self )
 
+class Test_Descriptor ( object ) :
+    def __init__ ( self, offset ) :
+        self.offset = offset
+    def __get__ ( self, instance, owner ) :
+        return self.offset + instance.id
+
+class Test_Descriptee ( object ) :
+    def __init__ ( self ) :
+        global i
+        self.id = i
+        i += 1
+    offset = Test_Descriptor( 10 )
+    def __repr__ ( self ) :
+        self.id = self.id + 1
+        return "<TestDescriptee:%d>" % self.offset
+
+class Test_Outer ( object ) :
+    class Test_Inner ( object ) :
+        def __repr__ ( self ) :
+            return "<Test_Inner>"
