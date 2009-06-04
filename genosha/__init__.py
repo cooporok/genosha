@@ -1,4 +1,4 @@
-#    genosha/__init__.py - GENeric Object marSHAlling
+#    genosha/__init__.py - GENeral Object marSHAller
 #    Copyright (C) 2009 Shawn Sulma <genosha@470th.org>
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -13,7 +13,8 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-r"""GENOSHA (GENeric Object marSHAlling) is a library to allow serialization of
+# dinsdale? crelm? figgis?
+r"""GENOSHA (GENeral Object marSHAller) is a library to allow serialization of
 
 Genosha introduces the ability to serialize python objects in a manner similar to the
 :mod:`pickle` module, where unpickling returns you to the original objects.  Like
@@ -24,18 +25,10 @@ similar.  The following types of objects cannot be marshalled using Genosha:
  - iterators;
  - closures;
  - lambdas;
- - functions and classes that are not visible in the top level of their module[*];
+ - functions and classes that defined dynamically (e.g. references to functions created by functions)
  - old-style classes (mostly because they're going away and they're not really necessary any longer)
  - extension types unless they play very nicely
  - pathologically-complex definitions
-
-( [*] = some of these are technically supported, if they are defined within class scopes,
-but the marshalling mechanism here is a little naive and may be confused if there are
-multiple inner classes in a module with the same name; there is no way to identify which
-definition is the real one. Genosha assumes it's the first one it finds; in many cases there
-will only be one, and this is good. "Namespaces are good, let's do more of those"... Yes,
-they would have been helpful here. You can disable this behaviour by setting
-genosha.SIMPLE_SCOPING to True )
 
 The genosha-marshalled objects are each represented by a dict containing special entries
 that identify the type of object it is, any items or attributes of note, and its object-id.
@@ -55,22 +48,14 @@ from collections import defaultdict, deque
 import sys, types, inspect
 try :
     import gc
-except : # pypy and jython may not have gc module.  This is okay.
+except : # some python implementations (jython, pypy, etc) may not have gc module.  This is okay.
     gc = None
 
-# default use of garbage collector reduction techniques is disabled.
-# It is several times slower and offers minimal size improvement.
-USE_GC_REDUCTION = False
-# hack to get <type 'cell'> which is not visible in python code ordinarily.
+# hack to get <type 'cell'> which is not visible in python code ordinarily. Used only in gc-reference induction.
 CellType = type( ( lambda x : ( lambda y : x + y ) )( 0 ).func_closure[0] )
 
 # special value to indicate the version of genosha object structure used.
 SENTINEL = "@genosha:1@"
-
-# allows inner classes (and @staticmethods) to be seen at scopes other than module-level.
-# enabled there is the possibility of confusion if multiple inner classes exist in a module
-# with the same name.  Set this to True to prevent inner classes from marshalling.
-SIMPLE_SCOPING = False
 
 class GenoshaObject ( object ) :
     __slots__ = ( 'type', 'oid', 'fields', 'items', 'attribute', 'instance' )
@@ -88,9 +73,10 @@ class GenoshaReference ( object ) :
         return "<GenoshaReference: oid=%d>" % self.oid
 
 class GenoshaEncoder ( object ) :
-    def __init__ ( self, object_hook = GenoshaObject, reference_hook = GenoshaReference, string_hook = None ) :
+    def __init__ ( self, object_hook = GenoshaObject, reference_hook = GenoshaReference, string_hook = None, use_gc_reduction = False ) :
         self.object_hook = object_hook
         self.reference_hook = reference_hook
+        self.gc_reduction = use_gc_reduction
         if string_hook :
             self.marshal_str = self.marshal_unicode = self.marshal_basestring = string_hook
             self.primitives -= set( [ str, unicode, basestring ] )
@@ -114,12 +100,12 @@ class GenoshaEncoder ( object ) :
     def _id ( self, obj ) :
         return self.python_ids.setdefault( id( obj ), len( self.python_ids ) + 1 )
 
-    def _items ( self, obj, typename, iterator, simple = True ) :
-        return typename( self._marshal( item ) if simple else ( self._marshal( item[0] ), self._marshal( item[1] ) ) for item in iterator( obj ) )
+    def _items ( self, obj, klass, iterator, simple = True ) :
+        return klass( self._marshal( item ) if simple else ( self._marshal( item[0] ), self._marshal( item[1] ) ) for item in iterator( obj ) )
 
-    def _object ( self, obj, out, items, attributes, is_instance ) :
-        if items is not None :
-            out.items = items()
+    def _object ( self, obj, out, items_func, attributes, is_instance ) :
+        if items_func is not None :
+            out.items = items_func()
         fields = {}
         if hasattr( obj, '__dict__' ) :
             fields.update( item for item in obj.__dict__.items() if ( not item[0].startswith('__') ) and not hasattr( item[1], '__call__' ) )
@@ -131,12 +117,12 @@ class GenoshaEncoder ( object ) :
             out.fields = self._items( fields, dict, dict.items, simple = False )
         return out
 
-    def marshal_object ( self, obj, items = None, immutable = False, typename = None, attributes = None, root = False ) :
-        is_instance = not typename
-        if not isinstance( typename, basestring ) :
-            typename = self.find_type( typename or obj.__class__ )
-        out = self.object_hook( type = typename )
-        immediate = USE_GC_REDUCTION and gc and ( not root ) and self._referrers( obj ) <= 1
+    def marshal_object ( self, obj, items = None, immutable = False, kind = None, attributes = None, root = False ) :
+        is_instance = not kind
+        if not isinstance( kind, basestring ) :
+            kind = self.find_scoped_name( kind or obj.__class__ )
+        out = self.object_hook( type = kind )
+        immediate = self.gc_reduction and gc and ( not root ) and self._referrers( obj ) <= 1
         if not immediate :
             oid = self._id( obj )
             self.oids.add( oid )
@@ -183,16 +169,16 @@ class GenoshaEncoder ( object ) :
             raise TypeError, "lambdas are not supported."
         if obj.func_closure :
             raise TypeError, "closures are not supported."
-        st = self.find_type( obj )
+        st = self.find_scoped_name( obj )
         #print st
         if not st : # getattr( sys.modules[obj.__module__], obj.__name__, None ) :
             if hasattr( obj, 'next' ) and hasattr( getattr( obj, 'next' ), '__call__' ) and hasattr( obj, '__iter__' ) and obj == obj.__iter__() :
                 raise TypeError, "iterators are not supported."
             raise TypeError, "function '%s' is not visible in module '%s'. Subscoped functions are not supported." % ( obj.__name__, obj.__module__ )
-        return self.marshal_object( obj, typename = st, root = root )
+        return self.marshal_object( obj, kind = st, root = root )
 
     def marshal_type ( self, obj, root = False ) :
-        return self.marshal_object( obj, typename = obj, root = root )
+        return self.marshal_object( obj, kind = obj, root = root )
 
     def marshal_module ( self, obj, root = False ) :
         oid = self._id( obj )
@@ -216,29 +202,27 @@ class GenoshaEncoder ( object ) :
             return obj
         if type( obj ) in self.unsupported :
             raise TypeError, "'%s' is an unsupported type." % type( obj ).__name__
-        for typename in inspect.getmro( obj.__class__ ) :
-            if typename in self.builtin_types :
-                return getattr( self, "marshal_" + typename.__name__ )( obj, root = root )
+        for kind in inspect.getmro( obj.__class__ ) :
+            if kind in self.builtin_types :
+                return getattr( self, "marshal_" + kind.__name__ )( obj, root = root )
         return self.marshal_object( obj, root = root )
 
-    def find_type ( self, obj ) :
-        scopes = self.find_definition( obj, obj.__name__, sys.modules[obj.__module__], [] )
-        if scopes :
-            return "%s/%s" % ( scopes[0], ".".join( scopes[1:] ) )
-        raise TypeError, "%s.%s cannot be resolved. Nested scopes are not supported." % ( obj.__module__, obj.__name__ )
-
-    scoping_types = frozenset( [ types.TypeType, types.FunctionType ] )
-    def find_definition ( self, obj, name, parent, seen ) :
-        if name in parent.__dict__ and getattr( parent, name ) is obj :
-            return [ parent.__name__, name ]
-        if not SIMPLE_SCOPING :
-            seen.append( parent )
-            for k, v in parent.__dict__.items() :
-                if type( v ) in self.scoping_types and v not in seen :
-                    d = self.find_definition( obj, name, v, seen ) # this recursion is ok; it should normally never go more than a couple of levels.
-                    if d :
-                        return [ parent.__name__ ] + d
-        return None
+    scoping_types = set( [ types.TypeType, types.FunctionType ] )
+    def find_scoped_name ( self, obj ) :
+        scopes = deque()
+        seen = set()
+        name = obj.__name__
+        scopes.append( ( [], sys.modules[obj.__module__] ) )
+        while len( scopes ) > 0 :
+            path, scope = scopes.popleft()
+            if hasattr( scope, name ) and getattr( scope, name ) is obj :
+                path.extend( [ scope.__name__, name ] )
+                return "%s/%s" % ( path[0], ".".join( path[1:] ) )
+            seen.add( id( scope ) )
+            for child in scope.__dict__.values() :
+                if type( child ) in self.scoping_types and id( child ) not in seen :
+                    scopes.append( ( path + [ scope.__name__ ], child ) )
+        raise TypeError, "%s.%s cannot be located in any nested scope. This type is not supported." % ( obj.__module__, obj.__name__ )
 
     frame_types = set( [ types.FrameType, CellType ] ) # needed? , types.ModuleType )
     def _referrers( self, obj ) :
@@ -273,15 +257,15 @@ class GenoshaDecoder ( object ) :
     def create_object ( self, data ) :
         immediate = not hasattr( data, 'oid' )
         if not hasattr( data, 'attribute' ) :
-            typename = self.resolve_type( *data.type.split('/') )
+            kind = self.resolve_type( *data.type.split('/') )
         if hasattr( data, 'attribute' ) :
             obj = getattr( self._unmarshal( data.instance ), data.attribute )
         elif not hasattr( data, 'items' ) and not hasattr( data, 'fields' ) :
-            obj = typename # raw type
-        elif self.immutables & set ( inspect.getmro( typename ) ) :
-            obj = typename.__new__( typename, self._unmarshal( data.items ) )
+            obj = kind # raw type
+        elif self.immutables & set ( inspect.getmro( kind ) ) :
+            obj = kind.__new__( kind, self._unmarshal( data.items ) )
         else :
-            obj = typename.__new__( typename )
+            obj = kind.__new__( kind )
             if immediate :
                 self.populate_object( obj, data )
             else :
@@ -300,7 +284,7 @@ class GenoshaDecoder ( object ) :
         if hasattr( data, 'fields' ) :
             if hasattr( obj, '__dict__' ) :
                 obj.__dict__.update( self._unmarshal( data.fields ) )
-            else :  # __slots__ based
+            else :  # __slots__ or descriptor based
                 for key, value in data.fields.items() :
                     setattr( obj, self._unmarshal( key ), self._unmarshal( value ) )
         return obj
@@ -330,10 +314,10 @@ class GenoshaDecoder ( object ) :
     def _unmarshal ( self, data ) :
         return self.dispatch[type(data)]( self, data )
 
-    def resolve_type ( self, modname, typename = '' ) :
+    def resolve_type ( self, modname, kind = '' ) :
         __import__( modname )
         scope = sys.modules[ modname ]
-        for name in typename.split('.') :
+        for name in kind.split('.') :
             scope = getattr( scope, name ) if name else scope
         return scope
 
