@@ -55,36 +55,36 @@ def load ( f ) :
 
 primitives = { 'int' : int, 'str' : str, 'unicode' : unicode, 'float' : float, 'long' : long, 'bool' : bool, 'NoneType' : lambda x : None }
 
-def encode_element ( parent, data, tag = None ) :
+def encode_element ( parent, data ) :
     if type( data ) in encoders :
-        encoders[type(data)]( parent, data, tag )
+        encoders[type(data)]( parent, data )
     else :
         e = ET.SubElement( parent, "primitive" )
-        e.set( tag or "type", type( data ).__name__ )
+        e.set( "type", type( data ).__name__ )
         e.text = str( data )
 
-def encode_object ( parent, data, tag = None ) :
-    e = ET.SubElement( parent, tag or "object" )
+def encode_object ( parent, data ) :
+    e = ET.SubElement( parent, "object" )
     for attrib in ( 'oid', 'type', 'attribute' ) :
         if hasattr( data, attrib ) :
             e.set( attrib, str( getattr( data, attrib ) ) )
     if hasattr( data, 'instance' ) :
-        encode_element( e, data.instance, tag = 'instance' )
+        encode_element( ET.SubElement( e, 'instance' ), data.instance )
     if hasattr( data, 'items' ) :
         encode_element( ET.SubElement( e, 'items' ), data.items )
     if hasattr( data, 'fields' ) :
-        encode_element( e, data.fields, tag = 'fields' )
+        encode_element( ET.SubElement( e, 'fields' ), data.fields )
 
-def encode_reference ( parent, data, tag = None ) :
-    ET.SubElement( parent, tag or 'reference' ).set( 'oid', str( data.oid ) )
+def encode_reference ( parent, data ) :
+    ET.SubElement( parent, 'reference' ).set( 'oid', str( data.oid ) )
 
-def encode_list ( parent, data, tag = None ) :
-    e = ET.SubElement( parent, tag or 'list' )
+def encode_list ( parent, data ) :
+    e = ET.SubElement( parent, 'list' )
     for item in data :
         encode_element( ET.SubElement( e, 'item' ), item )
 
-def encode_map ( parent, data, tag = None ) :
-    e = ET.SubElement( parent, tag or 'map' )
+def encode_map ( parent, data ) :
+    e = ET.SubElement( parent, 'map' )
     for key, value in data.items() :
         i = ET.SubElement( e, 'entry' )
         encode_element( ET.SubElement( i, 'key' ), key )
@@ -135,9 +135,9 @@ def decode_child ( element ) :
     return decode_element( element[0] )
 
 decoders = { 'object' : decode_object, 'list' : decode_list, 'primitive' : decode_primitive
-        , 'map' : decode_map, 'fields' : decode_map
+        , 'map' : decode_map, 'fields' : decode_child
         , 'items' : decode_child, 'item' : decode_child, 'key' : decode_child, 'value' : decode_child
-        , 'reference' : decode_reference, 'instance' : decode_reference
+        , 'reference' : decode_reference, 'instance' : decode_child
         , 'entry' : lambda e : ( decode_element( e.find( 'key' ) ), decode_element( e.find( 'value' ) ) )
     }
 
