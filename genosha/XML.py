@@ -13,9 +13,52 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-r"""genosha/xml.py provides an implemention of output to (and input from) xml
-for the genosha marshalling processor.  It provides :mod:`pickle`-like capabilities, using an
-XML syntax as the underlying serialization mechanism.
+r"""genosha/XML.py is a serialization/deserialization wrapper for the :mod:`genosha`
+marshalling library.  It provides functions similar to those found in :mod:`pickle` or
+:mod:`json` but the representation used is XML.
+
+The public interface should be very familiar to anyone who has used the :mod:`json`,
+:mod:`pickle` or mod:`marshal` modules.  Marshalling objects this way is somewhat more
+human-readable and editable than pickle files are; the tradeoff is that the Genosha XML
+output may be significantly larger than a corresponding pickle.
+
+The XML elements used in the representation are:
+
+    <genosha type='...'>...</genosha> - the genosha-marshalled data.  the ``type`` attribute identifies the genosha version.
+        contains <object>, <reference> or <primitive> children.
+
+    <object type='...' oid='...' attribute='...'>...</object> - a GenoshaObject.
+        ``type`` - the object type information (module/scopes.to.typename)
+        ``oid`` - the object's locally-unique reference id
+        ``attribute`` - used for to identify special attributes on an object (e.g. @classmethods)
+        contains <instance>, <items>, <fields> children
+
+    <reference oid='...'/>  - a GenoshaReference pointing to the `oid` locally-unique reference number
+
+    <primitive type='...'>...</primitive> - represents a primitive type
+        ``type`` is one of 'int', 'str', 'unicode', 'float', 'long', 'bool', or 'NoneType'
+        contains the string representation of the object.
+
+    <instance>...</instance> - used for instance methods to indicate the reference ID of the bound instance.
+        contains a <reference/> child.
+
+    <items>...</items> - the "contents" of the object (list elements, dict entries, etc.) which may be passed to the object's constructor.
+        contains one child of <list>, <map>, or <primitive>.
+
+    <fields>...</field> - denotes the fields of the objects (attributes or contents of the object's __dict__ or slots).
+        contains a single <map> child.
+
+    <list>...</list> - represents a simple sequence.
+        contains zero or more <item> children.
+
+    <map>...</map> - represents a dict/map.
+        contains zero or more <entry> children
+
+    <item>...</item> - an item in a sequence.
+        contains one child of <object>, <reference/>, <primitive>, <list> or <map>.
+
+    <entry><key>...</key><value>...</value></entry> - represents an entry in the map.
+        each of key and value may contain a single child of <object>, <reference/>, <primitive>, <list> or <map>.
 """
 import xml.etree.ElementTree as ET
 
@@ -23,18 +66,11 @@ from genosha import GenoshaObject, GenoshaReference, GenoshaEncoder, GenoshaDeco
 
 __version__ = "0.1"
 __author__ = "Shawn Sulma <genosha@470th.org>"
+__all__ = [ 'marshal', 'unmarshal', 'dumps', 'dump', 'loads', 'load' ]
 
-#<object oid="<oid>" class="<class-name>" attribute="<attribute-name>">
-#   <items>...</items>
-#   <fields><field name="<name>"><value>...</value></field>...</fields>
-#</object>
-#<reference oid="<oid>"/>
-#<primitive type="<type>">...</primitive>
-#<list>...</list>
-#<dict><entry><key>...</key><value>...</value></entry>...</dict>
-
-def marshal ( gd ) :
-    _m = GenoshaEncoder().marshal( gd )
+def marshal ( obj ) :
+    r"""Prepares the passed object ``obj`` for expression as XML output."""
+    _m = GenoshaEncoder().marshal( obj )
     root = ET.Element( "genosha" )
     root.set( 'type', _m[0] )
     for item in _m[1:] :
@@ -42,18 +78,27 @@ def marshal ( gd ) :
     return ET.ElementTree( root )
 
 def unmarshal ( xmldoc ) :
+    r"""Translates the passed XML etree ``xmldoc`` into a Genosha structure."""
     return GenoshaDecoder().unmarshal( decode( xmldoc ) )
 
 def dumps ( o ) :
+    r"""Dump the passed object ``o`` (and its refererred object graph) as XML which
+    is returned as a string."""
     return ET.tostring( marshal( o ).getroot() )
 
-def dump ( f ) :
+def dump ( o, f ) :
+    r"""Dump the passed object ``o`` (and its refererred object graph) as XML which
+    is written to the file-like object ``f`` (which has a .write method)."""
     marshal( o ).write( f )
 
 def loads ( s ) :
+    r"""Convert the passed XML string ``s`` back into Python objects with their
+    cross references restored."""
     return unmarshal( ET.fromstring( s ) )
 
 def load ( f ) :
+    r"""Read an XML document from the file-like object ``f`` and converts it back into
+    Python objects with their cross references restored."""
     return unmarshal( ET.parse( f ) )
 
 primitives = { 'int' : int, 'str' : str, 'unicode' : unicode, 'float' : float, 'long' : long, 'bool' : bool, 'NoneType' : lambda x : None }
@@ -143,17 +188,3 @@ decoders = { 'object' : decode_object, 'list' : decode_list, 'primitive' : decod
         , 'key' : decode_child, 'value' : decode_child, 'instance' : decode_child
         , 'entry' : lambda e : ( decode_element( e.find( 'key' ) ), decode_element( e.find( 'value' ) ) )
     }
-
-
-if __name__ == '__main__' :
-    l1 = list ( 'abc' )
-    l2 = [ 'one', 'two', 'three' ]
-    l2.append( l1 )
-    l1.append( l2 )
-    l = [ "eins", "zwei", [ 'a', 'b' ] ]
-    d = { 'a' : 1, 'b' : 2, 'c' : 3 }
-    print d
-    fr = dumps( d )
-    print fr
-    to = loads( fr )
-    print to
