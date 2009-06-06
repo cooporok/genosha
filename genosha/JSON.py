@@ -43,6 +43,8 @@ except :
 
 from genosha import *
 
+__version__ = "0.1"
+__author__ = "Shawn Sulma <genosha@470th.org>"
 __all__ = [ 'marshal', 'unmarshal', 'dumps', 'dump', 'loads', 'load' ]
 
 def marshal( o ) :
@@ -51,17 +53,17 @@ def marshal( o ) :
 def unmarshal( o ) :
     return GenoshaDecoder( string_hook = _json_unescape_string ).unmarshal( o )
 
-def dumps ( o, indent = 2 ) :
-    return json.dumps( marshal(o), indent = indent, default = _genosha_to_json )
+def dumps ( o, **kwargs ) :
+    return json.dumps( marshal(o), indent = indent, default = _genosha_to_json, **kwargs )
 
-def dump ( o, f, indent = None ) :
-    json.dump( marshal(o), f, indent = indent, default = _genosha_to_json )
+def dump ( o, f, **kwargs ) :
+    json.dump( marshal(o), f, indent = indent, default = _genosha_to_json, **kwargs )
 
-def loads ( s ) :
-    return unmarshal( json.loads( s, object_hook = _json_to_genosha ) )
+def loads ( s, **kwargs ) :
+    return unmarshal( json.loads( s, object_hook = _json_to_genosha, **kwargs ) )
 
-def load ( f ) :
-    return unmarshal( json.load( f, object_hook = _json_to_genosha ) )
+def load ( f, **kwargs ) :
+    return unmarshal( json.load( f, object_hook = _json_to_genosha, **kwargs ) )
 
 _jsonmap = ( ( 'type', "@t" ), ( 'oid', "@id" ), ( 'fields', "@f" ), ( 'items', "@i" ), ( 'attribute', "@a" ), ( 'instance', "@o" ) )
 _jsonunmap = dict( ( e[1], e[0] ) for e in _jsonmap )
