@@ -24,7 +24,7 @@ and bools) are abstracted into GenoshaObjects; references to other objects (repr
 other GenoshaObjects are abstracted into GenoshaReferences. Like :mod:`pickle` there are
 limitations to what it is capable of.  The good news is that Genosha handles a few more
 situations than pickle.  The limitations are still of a similar kind, however.  The following
-types of objects cannot be marshalled using Genosha:
+types of objects cannot be marshalled using Genosha (not comprehensive, but illustrative):
 
  - generators (and generator functions);
  - iterators;
