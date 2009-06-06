@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#    genoshatest/__init__.py - test cases for Genosha
+#    genoshatest/__init__.py - tests for Genosha
 #    Copyright (C) 2009 Shawn Sulma <genosha@470th.org>
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -18,6 +18,9 @@ import unittest
 from collections import defaultdict, deque
 
 import genosha
+
+__version__ = "0.1"
+__author__ = "Shawn Sulma <genosha@470th.org>"
 
 class DefaultTestCase(unittest.TestCase):
     def _perform( self, data, expected = None ) :
