@@ -20,6 +20,9 @@ import genosha
 from genosha.JSON import dumps, loads
 import genoshatest
 
+__version__ = "0.1"
+__author__ = "Shawn Sulma <genosha@470th.org>"
+
 class GenoshaJSONTests ( genoshatest.GenoshaTests ) :
     def setUp ( self ) :
         self.marshal = dumps

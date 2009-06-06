@@ -21,6 +21,9 @@ import xml.etree.ElementTree as ET
 
 from genosha import GenoshaObject, GenoshaReference, GenoshaEncoder, GenoshaDecoder
 
+__version__ = "0.1"
+__author__ = "Shawn Sulma <genosha@470th.org>"
+
 #<object oid="<oid>" class="<class-name>" attribute="<attribute-name>">
 #   <items>...</items>
 #   <fields><field name="<name>"><value>...</value></field>...</fields>

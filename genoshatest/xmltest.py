@@ -19,6 +19,9 @@ import time, sys, unittest
 from genosha.XML import dumps, loads
 import genoshatest
 
+__version__ = "0.1"
+__author__ = "Shawn Sulma <genosha@470th.org>"
+
 class GenoshaXMLTests ( genoshatest.GenoshaTests ) :
     def setUp ( self ) :
         self.marshal = dumps
