@@ -13,7 +13,6 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-# dinsdale? crelm? figgis?
 r"""GENOSHA (GENeral Object marSHAller) is a library to allow serialization of Python
 objects.  While :mod:`pickle` performs this task, pickles are not always appropriate, for
 example, if a serialized object might need to be manipulated by an outside tool (in the
@@ -78,9 +77,6 @@ except : # some python implementations (jython?, pypy?, etc) may not have gc mod
 __version__ = "0.1"
 __author__ = "Shawn Sulma <genosha@470th.org>"
 
-# hack to get <type 'cell'> which is not visible in python code ordinarily. Used only in gc-reference counting.
-CellType = type( ( lambda x : ( lambda y : x + y ) )( 0 ).func_closure[0] )
-
 # special value to indicate the version of genosha object structure used.
 SENTINEL = "@genosha:1@"
 
@@ -130,16 +126,10 @@ class GenoshaEncoder ( object ) :
     ``string_hook`` allows you to specify a string-like-object processor.  If specified
     it should accept the string types (str, unicode) and SHOULD return the same type.
     This is useful for escaping (see the JSON implementation for an example).
-
-    ``use_gc_reduction`` indicates whether additional trickery should be used to reduce
-    the complexity of the resulting structure.  In practise, this is rarely worthwhile, as
-    the improvement is minimal and the use of :mod:`gc` to detect references is
-    incredibly slow.  No really. VERY slow.  Don't say I didn't warn you.
     """
-    def __init__ ( self, object_hook = GenoshaObject, reference_hook = GenoshaReference, string_hook = None, use_gc_reduction = False ) :
+    def __init__ ( self, object_hook = GenoshaObject, reference_hook = GenoshaReference, string_hook = None ) :
         self.object_hook = object_hook
         self.reference_hook = reference_hook
-        self.gc_reduction = use_gc_reduction
         if string_hook :
             self.marshal_str = self.marshal_unicode = self.marshal_basestring = string_hook
             self.primitives -= set( [ str, unicode, basestring ] )
@@ -153,7 +143,7 @@ class GenoshaEncoder ( object ) :
         self.gc = gc and gc.isenabled()
         gc and gc.disable()
         try :
-            payload = self._marshal( obj, root = True )
+            payload = self._marshal( obj )
             while len( self.deferred ) > 0 :
                 self._object( *self.deferred.popleft() )
             return [ SENTINEL, self.objects, payload ]
@@ -180,54 +170,49 @@ class GenoshaEncoder ( object ) :
             out.fields = self._items( fields, dict, dict.items, simple = False )
         return out
 
-    def marshal_object ( self, obj, items = None, immutable = False, kind = None, attributes = None, root = False ) :
+    def marshal_object ( self, obj, items = None, immutable = False, kind = None, attributes = None ) :
         is_instance = not kind
         if not isinstance( kind, basestring ) :
             kind = self.find_scoped_name( kind or obj.__class__ )
-        out = self.object_hook( type = kind )
-        immediate = self.gc_reduction and gc and ( not root ) and self._referrers( obj ) <= 1
-        if not immediate :
-            oid = self._id( obj )
-            self.oids.add( oid )
-            out.oid = oid
-        if immutable or immediate :
+        oid = self._id( obj )
+        self.oids.add( oid )
+        out = self.object_hook( type = kind, oid = oid )
+        if immutable :
             self._object( obj, out, items, attributes, is_instance )
-            if immediate :
-                return out
         else :
             self.deferred.append( ( obj, out, items, attributes, is_instance ) )
         self.objects.append( out )
         return self.reference_hook( oid )
 
-    def marshal_list ( self, obj, root = False ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, list.__iter__ ), root = root )
+    def marshal_list ( self, obj ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, list.__iter__ ) )
 
-    def marshal_tuple ( self, obj, root = False ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, tuple.__iter__ ), immutable = True, root = root )
+    def marshal_tuple ( self, obj ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, tuple.__iter__ ), immutable = True )
 
-    def marshal_dict ( self, obj, root = False ) :
-        return self.marshal_object( obj, lambda: self._items( obj, dict, dict.items, simple = False ), root = root )
+    def marshal_dict ( self, obj ) :
+        return self.marshal_object( obj, lambda: self._items( obj, dict, dict.items, simple = False ) )
 
-    def marshal_set ( self, obj, root = False ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, set.__iter__ ), root = root )
+    def marshal_set ( self, obj ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, set.__iter__ ) )
 
-    def marshal_frozenset ( self, obj, root = False ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, frozenset.__iter__ ), immutable = True, root = root )
+    def marshal_frozenset ( self, obj ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, frozenset.__iter__ ), immutable = True )
 
-    def marshal_defaultdict ( self, obj, root = False ) :
-        return self.marshal_object( obj, lambda: self._items( obj, dict, defaultdict.items, simple = False ), attributes = { 'default_factory' : obj.default_factory }, root = root )
+    def marshal_defaultdict ( self, obj ) :
+        return self.marshal_object( obj, lambda: self._items( obj, dict, defaultdict.items, simple = False ), attributes = { 'default_factory' : obj.default_factory } )
 
-    def marshal_deque ( self, obj, root = False ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, deque.__iter__, ), root = root )
+    def marshal_deque ( self, obj ) :
+        return self.marshal_object( obj, lambda: self._items( obj, list, deque.__iter__, ) )
 
-    def marshal_instancemethod ( self, obj, root = False ) :
+    def marshal_instancemethod ( self, obj ) :
         oid = self._id( obj )
         self.oids.add( oid )
         out = self.object_hook( oid = oid, instance = self._marshal( obj.im_self ), attribute = obj.im_func.func_name )
         self.objects.append( out )
         return self.reference_hook( oid )
 
-    def marshal_function ( self, obj, root = False ) :
+    def marshal_function ( self, obj ) :
         if obj.__name__ == "<lambda>" :
             raise TypeError, "lambdas are not supported."
         if obj.func_closure :
@@ -237,27 +222,27 @@ class GenoshaEncoder ( object ) :
             if hasattr( obj, 'next' ) and hasattr( getattr( obj, 'next' ), '__call__' ) and hasattr( obj, '__iter__' ) and obj == obj.__iter__() :
                 raise TypeError, "iterators are not supported."
             raise TypeError, "function '%s' is not visible in module '%s'. Subscoped functions are not supported." % ( obj.__name__, obj.__module__ )
-        return self.marshal_object( obj, kind = st, root = root )
+        return self.marshal_object( obj, kind = st )
 
-    def marshal_type ( self, obj, root = False ) :
-        return self.marshal_object( obj, kind = obj, root = root )
+    def marshal_type ( self, obj ) :
+        return self.marshal_object( obj, kind = obj )
 
-    def marshal_module ( self, obj, root = False ) :
+    def marshal_module ( self, obj ) :
         oid = self._id( obj )
         self.oids.add( oid )
         out = self.object_hook( oid = oid, type = obj.__name__ )
         self.objects.append( out )
         return self.reference_hook( oid )
 
-    def marshal_complex ( self, obj, root = False ) :
-        return self.marshal_object( obj, root = root, items = lambda: str( obj )[1:-1] )
+    def marshal_complex ( self, obj ) :
+        return self.marshal_object( obj, items = lambda: str( obj )[1:-1] )
 
     primitives = set( [int, long, float, bool, types.NoneType, unicode, str, basestring] )
     unsupported = set( [ types.GeneratorType, types.InstanceType ] )
     builtin_types = set( [list, tuple, set, frozenset, dict, defaultdict, deque, object, type
         , types.FunctionType, types.MethodType, types.ModuleType, complex ] )
 
-    def _marshal ( self, obj, root = False ) :
+    def _marshal ( self, obj ) :
         if id( obj ) in self.python_ids :
             return self.reference_hook( self._id( obj ) )
         if type( obj ) in self.primitives :
@@ -266,8 +251,8 @@ class GenoshaEncoder ( object ) :
             raise TypeError, "'%s' is an unsupported type." % type( obj ).__name__
         for kind in inspect.getmro( obj.__class__ ) :
             if kind in self.builtin_types :
-                return getattr( self, "marshal_" + kind.__name__ )( obj, root = root )
-        return self.marshal_object( obj, root = root )
+                return getattr( self, "marshal_" + kind.__name__ )( obj )
+        return self.marshal_object( obj )
 
     scoping_types = set( [ types.TypeType, types.FunctionType ] )
     def find_scoped_name ( self, obj ) :
@@ -285,14 +270,6 @@ class GenoshaEncoder ( object ) :
                 if type( child ) in self.scoping_types and id( child ) not in seen :
                     scopes.append( ( path + [ scope.__name__ ], child ) )
         raise TypeError, "%s.%s cannot be located in any nested scope. This type is not supported." % ( obj.__module__, obj.__name__ )
-
-    frame_types = set( [ types.FrameType, CellType ] )
-    def _referrers( self, obj ) :
-        l = 0
-        for e in gc.get_referrers( obj ) :
-            if type( e ) not in self.frame_types :
-                l += 1
-        return l
 
 class GenoshaDecoder ( object ) :
     r"""Provides the mechanics of converting a genosha-marshalled structure back into
