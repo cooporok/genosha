@@ -60,12 +60,12 @@ Similarly, it is likely you'll want to use either the genosha.JSON or genosha.XM
 serializations.  The syntax for those is much the same as for pickle:
 
     >>> import genosha.JSON
-    >>> as_json = genosha.JSON.dumps( obj )
-    >>> obj_again = genohsa.JSON.loads( as_json )
+    >>> json_string = genosha.JSON.dumps( obj )
+    >>> obj_again = genohsa.JSON.loads( json_string )
 
     >>> import genosha.XML
-    >>> as_xml = genosha.XML.dumps( obj )
-    >>> obj_again = genosha.XML.loads( as_xml )
+    >>> xml_string = genosha.XML.dumps( obj )
+    >>> obj_again = genosha.XML.loads( xml_string )
 
 """
 from collections import defaultdict, deque
