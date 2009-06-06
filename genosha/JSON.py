@@ -1,4 +1,4 @@
-#    genosha/json.py - JSON serialization for Genosha.
+#    genosha/json.py - JSON persistence for Genosha.
 #    Copyright (C) 2009 Shawn Sulma <genosha@470th.org>
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -20,7 +20,7 @@ serialization mechanism.
 The public interface should be very familiar to anyone who has used the :mod:`json`,
 :mod:`pickle` or mod:`marshal` modules.  Marshalling objects this way is somewhat more
 human-readable and editable than pickle files are; the tradeoff is that the JSON-ed
-Genosha output is somewhat larger than a corresponding pickle.
+Genosha output is larger than a corresponding pickle.
 
 JSON (JavaScript Object Notation) is a lightweight data interchange format.  When python
 objects are serialized using JSON, they are expressed as a dict of a subset of their
@@ -30,10 +30,11 @@ No attempt is made to be able to reconstruct the original objects from JSON. Whe
 
 Genosha output is necessarily more complex than ordinary JSON text.  Like the :mod:`json`
 module, you pass in a single object (or a list/tuple/dict of objects; that list is still itself
-only a single object).  The JSON output contains a JSON-list with two elements:
+only a single object).  The JSON output contains a JSON-list with three elements:
 
-    1. a list of genosha-marshalled objects.
-    2. the object reference of the 'root' object passed into the dump/dumps call.
+    1. a marker indicating this is a Genosha-created structure
+    2. a list of genosha-marshalled objects.
+    3. the object reference of the 'root' object passed into the dump/dumps call.
 """
 try :
     import simplejson as json
@@ -78,7 +79,6 @@ def _genosha_to_json( obj ) :
 
 def _json_to_genosha( data ) :
     if "@o" in data or "@t" in data :
-        #return GenoshaObject( **dict( ( to, data[fr] ) for fr, to in _jsonunmap if fr in data ) )
         return GenoshaObject( **dict( ( _jsonunmap[k], v ) for k, v in data.items() ) )
     return data # fall back to returning the directory.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-#    genoshatest.py - test cases for Genosha over JSON
+#    genoshatest/jsontest.py - test cases for Genosha over JSON
 #    Copyright (C) 2009 Shawn Sulma <genosha@470th.org>
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -28,10 +28,4 @@ class GenoshaJSONTests ( genoshatest.GenoshaTests ) :
         self.unicode = str
 
 if __name__ == "__main__":
-    if '+gc' in sys.argv :
-        del sys.argv[sys.argv.index('+gc')]
-        genosha.USE_GC_REDUCTION = True
-    if '+scope' in sys.argv :
-        del sys.argv[sys.argv.index('+scope')]
-        genosha.SIMPLE_SCOPING = True
     unittest.main()

@@ -14,35 +14,39 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # dinsdale? crelm? figgis?
-r"""GENOSHA (GENeral Object marSHAller) is a library to allow serialization of
+r"""GENOSHA (GENeral Object marSHAller) is a library to allow serialization of Python
+objects.  While :mod:`pickle` performs this task, pickles are not always appropriate, for
+example, if a serialized object might need to be manipulated by an outside tool (in the
+simplest example: a text editor or shell script).
 
-Genosha introduces the ability to serialize python objects in a manner similar to the
-:mod:`pickle` module, where unpickling returns you to the original objects.  Like
-:mod:`pickle` there are limitations to what it is capable of.  The limitations are very
-similar.  The following types of objects cannot be marshalled using Genosha:
+By itself, the genosha module provides means to represent a set of objects in a
+linearly-serializable manner.  Objects of all types (aside from "primitives" such as ints
+and bools) are abstracted into GenoshaObjects; references to other objects (represented as
+other GenoshaObjects are abstracted into GenoshaReferences. Like :mod:`pickle` there are
+limitations to what it is capable of.  The good news is that Genosha handles a few more
+situations than pickle.  The limitations are still of a similar kind, however.  The following
+types of objects cannot be marshalled using Genosha:
 
- - generators;
+ - generators (and generator functions);
  - iterators;
  - closures;
  - lambdas;
- - functions and classes that defined dynamically (e.g. references to functions created by functions)
+ - functions and classes that defined dynamically (e.g. references to functions returned
+   by functions other than through decoration)
  - old-style classes (mostly because they're going away and they're not really necessary any longer)
  - extension types unless they play very nicely
- - pathologically-complex definitions
+ - "pathologically-complex" definitions
 
-The genosha-marshalled objects are each represented by a dict containing special entries
-that identify the type of object it is, any items or attributes of note, and its object-id.
-Within one of these marshalled objects, all references to other (non-primitive) objects
-(e.g. instances in a list, or attributes of an instance) are converted to special
-genosha-references (strings in a special format pointing at another genosha-marshalled object).
-
-When genosha output is loaded, the objects are reconstituted based on the stored types,
-and their references are restored.
+GenoshaObjects and GenoshaReferences contain the information necessary to reconstruct
+the original objects (including references and cycles of references as necessary).
 
 The creation of the serialization structures is performed in memory; the output is not
-streamable.  Once all the genosha dictionaries are created, this structure is passed into
-the json module (or simplejson if it is available), and the result returned.
+streamable.
 
+There are two serialization modules provided.  genosha.JSON provides JSON
+serialization/deserialization.  genosha.XML provides and XML implementation using ElementTree.
+Each of the modules provides an interface that users of :mod:`pickle` should find familiar
+(dump, dumps, load, loads).
 """
 from collections import defaultdict, deque
 import sys, types, inspect
@@ -170,8 +174,7 @@ class GenoshaEncoder ( object ) :
         if obj.func_closure :
             raise TypeError, "closures are not supported."
         st = self.find_scoped_name( obj )
-        #print st
-        if not st : # getattr( sys.modules[obj.__module__], obj.__name__, None ) :
+        if not st :
             if hasattr( obj, 'next' ) and hasattr( getattr( obj, 'next' ), '__call__' ) and hasattr( obj, '__iter__' ) and obj == obj.__iter__() :
                 raise TypeError, "iterators are not supported."
             raise TypeError, "function '%s' is not visible in module '%s'. Subscoped functions are not supported." % ( obj.__name__, obj.__module__ )
@@ -224,7 +227,7 @@ class GenoshaEncoder ( object ) :
                     scopes.append( ( path + [ scope.__name__ ], child ) )
         raise TypeError, "%s.%s cannot be located in any nested scope. This type is not supported." % ( obj.__module__, obj.__name__ )
 
-    frame_types = set( [ types.FrameType, CellType ] ) # needed? , types.ModuleType )
+    frame_types = set( [ types.FrameType, CellType ] )
     def _referrers( self, obj ) :
         l = 0
         for e in gc.get_referrers( obj ) :

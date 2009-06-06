@@ -1,4 +1,4 @@
-#    genosha/json.py - XML serialization/deserialization for Genosha.
+#    genosha/XML.py - XML persistence for Genosha.
 #    Copyright (C) 2009 Shawn Sulma <genosha@470th.org>
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -13,9 +13,9 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-r"""genosha/xml.py provides an implemention of output to (and input from) xml serialization
-for the genosha library.  It provides :mod:`pickle`-like capabilities, using an XML-like
-syntax as the underlying serialization mechanism.
+r"""genosha/xml.py provides an implemention of output to (and input from) xml
+for the genosha marshalling processor.  It provides :mod:`pickle`-like capabilities, using an
+XML syntax as the underlying serialization mechanism.
 """
 import xml.etree.ElementTree as ET
 
@@ -26,9 +26,9 @@ from genosha import GenoshaObject, GenoshaReference, GenoshaEncoder, GenoshaDeco
 #   <fields><field name="<name>"><value>...</value></field>...</fields>
 #</object>
 #<reference oid="<oid>"/>
-#<primitive type="<type>"><[[CDATA...]]>...</primitive>
+#<primitive type="<type>">...</primitive>
 #<list>...</list>
-#<dict><entry><key><[[CDATA...]]></key><value>...</value></entry>...</dict>
+#<dict><entry><key>...</key><value>...</value></entry>...</dict>
 
 def marshal ( gd ) :
     _m = GenoshaEncoder().marshal( gd )
@@ -135,9 +135,9 @@ def decode_child ( element ) :
     return decode_element( element[0] )
 
 decoders = { 'object' : decode_object, 'list' : decode_list, 'primitive' : decode_primitive
-        , 'map' : decode_map, 'fields' : decode_child
-        , 'items' : decode_child, 'item' : decode_child, 'key' : decode_child, 'value' : decode_child
-        , 'reference' : decode_reference, 'instance' : decode_child
+        , 'map' : decode_map, 'reference' : decode_reference
+        , 'fields' : decode_child, 'items' : decode_child, 'item' : decode_child
+        , 'key' : decode_child, 'value' : decode_child, 'instance' : decode_child
         , 'entry' : lambda e : ( decode_element( e.find( 'key' ) ), decode_element( e.find( 'value' ) ) )
     }
 
