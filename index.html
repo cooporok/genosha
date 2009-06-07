@@ -1,41 +1,41 @@
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
-	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
 <head>
-	<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
 
-	<title>unayok/genosha @ GitHub</title>
-	
-	<style type="text/css">
-		body {
-  		margin-top: 1.0em;
-  		background-color: #ffe8fb;
-		  font-family: "helvetica"; 
-  		color: #000000;
+    <title>unayok/genosha @ GitHub</title>
+
+    <style type="text/css">
+        body {
+        margin-top: 1.0em;
+        background-color: #dfefff;
+          font-family: "helvetica";
+        color: #000000;
     }
     #container {
       margin: 0 auto;
       width: 700px;
     }
-		h1 { font-size: 150%; color: #908724; margin-bottom: 3px; }
-		h1 .small { font-size: 0.4em; }
-		h1 a { text-decoration: none }
-		h2 { font-size: 125%; color: #908724; }
+        h1 { font-size: 150%; color: #908724; margin-bottom: 3px; }
+        h1 .small { font-size: 0.4em; }
+        h1 a { text-decoration: none; }
+        h2 { font-size: 125%; color: #908724; }
     h3 { text-align: center; color: #908724; }
     a { color: #908724; }
     .description { font-size: 1.2em; margin-bottom: 30px; margin-top: 30px; font-style: italic;}
     .download { float: right; }
-		pre { background: #000; color: #fff; padding: 15px;}
+        pre { background: #000; color: #fff; padding: 15px;}
     hr { border: 0; width: 80%; border-bottom: 1px solid #aaa}
     .footer { text-align:center; padding-top:30px; font-style: italic; }
-	</style>
-	
+    </style>
+
 </head>
 
 <body>
   <a href="http://github.com/unayok/genosha"><img style="position: absolute; top: 0; right: 0; border: 0;" src="http://s3.amazonaws.com/github/ribbons/forkme_right_darkblue_121621.png" alt="Fork me on GitHub" /></a>
-  
+
   <div id="container">
 
     <div class="download">
@@ -44,24 +44,61 @@
       <a href="http://github.com/unayok/genosha/tarball/master">
         <img border="0" width="90" src="http://github.com/images/modules/download/tar.png"></a>
     </div>
-      
-    <h1><a href="http://github.com/unayok/genosha">genosha</a> 
+
+    <h1><a href="http://github.com/unayok/genosha">genosha</a>
       <span class="small">by <a href="http://github.com/unayok">unayok</a></span></h1>
 
     <div class="description">
       Python object graph serialization/deserialization over JSON or XML.
     </div>
 
+    <div class="content">
+<span class="caps">GENOSHA</span> (GENeral Object marSHAller) is a library to allow serialization of Python object graphs.  While <i>pickle</i> performs this task, pickles are not always appropriate, for example, if a serialized object might need to be manipulated by an outside tool (in the simplest example: a text editor or shell script).</p>
+	<p>By itself, the <i>genosha</i> module provides means to represent a set of objects (an object graph) in a linearly-serializable manner.  Objects of all types (aside from “primitives” such as ints and bools) are abstracted into GenoshaObjects; references to other objects (represented as
+other GenoshaObjects are abstracted into GenoshaReferences. Like :mod:`pickle` there are limitations to what it is capable of.  The good news is that Genosha handles a few more situations than pickle.  The limitations are still of a similar kind, however.  The following
+types of objects cannot be marshalled using Genosha (not comprehensive, but illustrative):</p>
+	<ul>
+	<li>generators (and generator functions);</li>
+		<li>iterators;</li>
+		<li>closures;</li>
+		<li>lambdas;</li>
+		<li>functions and classes that defined dynamically (e.g. references to functions returned by functions other than through decoration)</li>
+
+		<li>old-style classes (mostly because they’re going away and they’re not really necessary any longer)</li>
+		<li>extension types unless they play very nicely</li>
+		<li>“pathologically-complex” definitions</li>
+	</ul>
+	<p><span style="color: rgb(170, 170, 170);">GenoshaObject</span><a href="http://github.com/unayok/genosha/wikis/new?title=GenoshaObjects">?</a> and <span style="color: rgb(170, 170, 170);">GenoshaReference</span><a href="http://github.com/unayok/genosha/wikis/new?title=GenoshaReferences">?</a> contain the information necessary to reconstruct the original objects (including references and cycles of references as necessary).</p>
+	<p>The creation of the serialization structures is performed in memory; the output is not streamable.</p>
+	<p>There are two serialization modules provided.  genosha.JSON provides <span class="caps">JSON</span> serialization/deserialization.  genosha.XML provides and <span class="caps">XML</span> implementation using ElementTree. Each of the modules provides an interface that users of <i>pickle</i> should find familiar (dump, dumps, load, loads).</p>
+	<p>Usage of the genosha module is relatively straightforward.</p>
+<pre>&gt;&gt;&gt; out = genosha.marshal( obj )
+&gt;&gt;&gt; obj_again = genosha.unmarshal( out )
+</pre>
+	<p>It is probably a good idea to catch TypeErrors, as these are thrown when <i>genosha</i>
+encounters a situation it can’t handle (e.g. one of the above-listed problematic situations).</p>
+	<p>Similarly, it is likely you’ll want to use either the genosha.JSON or genosha.XML
+serializations.  The syntax for those is much the same as for pickle:</p>
+<p>With <a href="http://wiki.github.com/unayok/genosha/json">json</a>:</p>
+<pre>&gt;&gt;&gt; import genosha.JSON
+&gt;&gt;&gt; json_string = genosha.JSON.dumps( obj )
+&gt;&gt;&gt; obj_again = genohsa.JSON.loads( json_string )
+</pre>
+<p>With <a href="http://wiki.github.com/unayok/genosha/xml">xml</a>:</p>
+<pre>&gt;&gt;&gt; import genosha.XML
+&gt;&gt;&gt; xml_string = genosha.XML.dumps( obj )
+&gt;&gt;&gt; obj_again = genosha.XML.loads( xml_string )
+</pre>
+	<p>It is possible to write additional input/output functions, of course. In that case you will probably want to look at the <a href="http://wiki.github.com/unayok/genosha/genoshaencoder">GenoshaEncoder</a> and <a href="http://wiki.github.com/unayok/genosha/genoshadecoder">GenoshaDecoder</a> classes.</p>
+    </div>
     <h2>Dependencies</h2>
 <p>Python 2.6 or Python 2.5 with simplejson.</p>
 <h2>License</h2>
 <p>GPL v3</p>
 <h2>Authors</h2>
-<p>Shawn Sulma (unayok@470th.org)<br/><br/>      </p>
+<p>Shawn Sulma (unayok@470th.org)</p>
 <h2>Contact</h2>
-<p>Shawn Sulma (unayok@470th.org)<br/>      </p>
-
-
+<p>Shawn Sulma (unayok@470th.org)</p>
     <h2>Download</h2>
     <p>
       You can download this project in either
@@ -72,13 +109,13 @@
       by running:
       <pre>$ git clone git://github.com/unayok/genosha</pre>
     </p>
-      
+
     <div class="footer">
       get the source code on GitHub : <a href="http://github.com/unayok/genosha">unayok/genosha</a>
     </div>
-    
+
   </div>
 
-  
+
 </body>
 </html>
