@@ -14,7 +14,7 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 r"""GENOSHA (GENeral Object marSHAller) is a library to allow serialization of Python
-objects.  While :mod:`pickle` performs this task, pickles are not always appropriate, for
+object graphs.  While :mod:`pickle` performs this task, pickles are not always appropriate, for
 example, if a serialized object might need to be manipulated by an outside tool (in the
 simplest example: a text editor or shell script).
 
