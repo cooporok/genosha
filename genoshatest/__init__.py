@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 #    genoshatest/__init__.py - tests for Genosha
 #    Copyright (C) 2009 Shawn Sulma <genosha@470th.org>
 #
