@@ -134,19 +134,26 @@ class GenoshaEncoder ( object ) :
             self.marshal_str = self.marshal_unicode = self.marshal_basestring = string_hook
             self.primitives -= set( [ str, unicode, basestring ] )
             self.builtin_types |= set( [ str, unicode, basestring ] )
-        self.handlers = dict( ( typ, self.idem ) for typ in self.primitives )
-        self.handlers.update( ( typ, self.unknown ) for typ in self.unsupported )
-        self.handlers.update( ( typ, getattr( self, "marshal_" + typ.__name__ ) ) for typ in self.builtin_types )
+        self.dispatch = dict( ( typ, self.idem ) for typ in self.primitives )
+        self.dispatch.update( ( typ, self.unknown ) for typ in self.unsupported )
+        self.dispatch.update( ( typ, getattr( self, "marshal_" + typ.__name__ ) ) for typ in self.builtin_types )
         self.scoped_names = {}
+        self.builders = { list : lambda obj : self._sequence( obj, list.__iter__ )
+                , tuple : lambda obj : self._sequence( obj, tuple.__iter__ )
+                , dict : lambda obj : self._map( obj, dict.items )
+                , set : lambda obj : self._sequence( obj, set.__iter__ )
+                , frozenset : lambda obj : self._sequence( obj, frozenset.__iter__ )
+                , defaultdict : lambda obj : self._map( obj, defaultdict.items )
+                , deque : lambda obj : self._sequence( obj, deque.__iter__ )
+                }
 
-    primitives = set( [int, long, float, bool, types.NoneType, unicode, str, basestring] )
     unsupported = set( [ types.GeneratorType, types.InstanceType ] )
-    builtin_types = set( [list, tuple, set, frozenset, dict, defaultdict, deque, object, type
+    primitives = set( [ int, long, float, bool, types.NoneType, unicode, str, basestring ] )
+    builtin_types = set( [ list, tuple, set, frozenset, dict, defaultdict, deque, object, type
         , types.FunctionType, types.MethodType, types.ModuleType, complex ] )
 
     def marshal ( self, obj ) :
         self.objects = []
-        self.oids = set()
         self.python_ids = {}
         self.deferred = deque()
         self.gc = gc and gc.isenabled()
@@ -163,38 +170,41 @@ class GenoshaEncoder ( object ) :
         return self.python_ids.setdefault( id( obj ), len( self.python_ids ) )
 
     def _sequence ( self, obj, iterator ) :
-        return list( self._marshal( item ) for item in iterator( obj ) )
+        _marshal = self._marshal
+        return [ _marshal( item ) for item in iterator( obj ) ]
 
     def _map ( self, obj, iterator ) :
         d = {}
+        _marshal = self._marshal
         for key, value in iterator( obj ) :
-            d[self._marshal( key )] = self._marshal( value )
+            d[_marshal( key )] = _marshal( value )
         return d
 
-    def _object ( self, obj, out, items_func, attributes, is_instance ) :
-        if items_func is not None :
-            out.items = items_func()
+    def _object ( self, obj, out, items, attributes, is_instance ) :
+        if items is not None :
+            out.items = items( obj )
         if is_instance :
             fields = {}
+            _marshal = self._marshal
             if hasattr( obj, '__dict__' ) :
                 for key, value in obj.__dict__.items() :
                     if ( not key.startswith( '__' ) ) and ( not hasattr( value, '__call__' ) ) :
-                        fields[key] = value
+                        fields[key] = _marshal( value )
             elif hasattr( obj, '__slots__' ) :
                 for slot in obj.__slots__ :
                     if ( not slot.startswith('__') ) and hasattr( obj, slot ) and not hasattr( getattr( obj, slot ), '__call__' ) :
-                        fields[slot] = getattr( obj, slot )
+                        fields[slot] = _marshal( getattr( obj, slot ) )
             if attributes :
-                fields.update( attributes )
-            out.fields = self._map( fields, dict.items )
+                for key, value in attributes.items() :
+                    fields[key] = _marshal( value )
+            out.fields = fields
         return out
 
     def marshal_object ( self, obj, items = None, immutable = False, kind = None, attributes = None ) :
         is_instance = not kind
-        if not isinstance( kind, basestring ) :
-            kind = self.find_scoped_name( kind or obj.__class__ )
+        if is_instance :
+            kind = self.find_scoped_name( obj.__class__ )
         oid = self._id( obj )
-        self.oids.add( oid )
         out = self.object_hook( type = kind, oid = oid )
         if immutable :
             self._object( obj, out, items, attributes, is_instance )
@@ -204,29 +214,28 @@ class GenoshaEncoder ( object ) :
         return self.reference_hook( oid )
 
     def marshal_list ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._sequence( obj, list.__iter__ ) )
+        return self.marshal_object( obj, items = self.builders[list] )
 
     def marshal_tuple ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._sequence( obj, tuple.__iter__ ), immutable = True )
+        return self.marshal_object( obj, items = self.builders[tuple], immutable = True )
 
     def marshal_dict ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._map( obj, dict.items ) )
+        return self.marshal_object( obj, items = self.builders[dict] )
 
     def marshal_set ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._sequence( obj, set.__iter__ ) )
+        return self.marshal_object( obj, items = self.builders[set] )
 
     def marshal_frozenset ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._sequence( obj, frozenset.__iter__ ), immutable = True )
+        return self.marshal_object( obj, items = self.builders[frozenset], immutable = True )
 
     def marshal_defaultdict ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._map( obj, defaultdict.items ), attributes = { 'default_factory' : obj.default_factory } )
+        return self.marshal_object( obj, items = self.builders[defaultdict], attributes = { 'default_factory' : obj.default_factory } )
 
     def marshal_deque ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._sequence( obj, deque.__iter__, ) )
+        return self.marshal_object( obj, items = self.builders[deque] )
 
     def marshal_instancemethod ( self, obj ) :
         oid = self._id( obj )
-        self.oids.add( oid )
         out = self.object_hook( oid = oid, instance = self._marshal( obj.im_self ), attribute = obj.im_func.func_name )
         self.objects.append( out )
         return self.reference_hook( oid )
@@ -236,25 +245,24 @@ class GenoshaEncoder ( object ) :
             raise TypeError, "lambdas are not supported."
         if obj.func_closure :
             raise TypeError, "closures are not supported."
-        st = self.find_scoped_name( obj )
-        if not st :
+        kind = self.find_scoped_name( obj )
+        if not kind :
             if hasattr( obj, 'next' ) and hasattr( getattr( obj, 'next' ), '__call__' ) and hasattr( obj, '__iter__' ) and obj == obj.__iter__() :
                 raise TypeError, "iterators are not supported."
             raise TypeError, "function '%s' is not visible in module '%s'. Subscoped functions are not supported." % ( obj.__name__, obj.__module__ )
-        return self.marshal_object( obj, kind = st )
+        return self.marshal_object( obj, kind = kind, immutable = True )
 
     def marshal_type ( self, obj ) :
-        return self.marshal_object( obj, kind = obj )
+        return self.marshal_object( obj, kind = self.find_scoped_name( obj ), immutable = True )
 
     def marshal_module ( self, obj ) :
         oid = self._id( obj )
-        self.oids.add( oid )
         out = self.object_hook( oid = oid, type = obj.__name__ )
         self.objects.append( out )
         return self.reference_hook( oid )
 
     def marshal_complex ( self, obj ) :
-        return self.marshal_object( obj, items = lambda: str( obj )[1:-1] )
+        return self.marshal_object( obj, items = ( lambda o : str( o )[1:-1] ), immutable = True )
 
     def idem ( self, obj ) :
         return obj
@@ -264,13 +272,17 @@ class GenoshaEncoder ( object ) :
 
     def _marshal ( self, obj ) :
         if id( obj ) in self.python_ids :
-            return self.reference_hook( self._id( obj ) )
+            return self.reference_hook( self.python_ids[ id( obj ) ] )
         typ = type( obj )
-        if typ in self.handlers :
-            return self.handlers[typ]( obj )
+        dispatch = self.dispatch
+        if typ in dispatch :
+            return dispatch[typ]( obj )
         for kind in typ.__mro__ :
-            if kind in self.handlers :
-                return self.handlers[kind]( obj )
+            if kind in dispatch :
+                f = dispatch[kind]
+                dispatch[typ] = f
+                return f( obj )
+        dispatch[typ] = self.marshal_object
         return self.marshal_object( obj )
 
     scoping_types = set( [ types.TypeType, types.FunctionType ] )
@@ -306,7 +318,9 @@ class GenoshaDecoder ( object ) :
     parameter).  See the JSON deserializer for an example of this.
     """
     def __init__ ( self, string_hook = None ) :
-        self.string_hook = string_hook
+        if string_hook :
+            self.dispatch[str] = string_hook
+            self.dispatch[unicode] = string_hook
         self.mutability = {}
         self.kinds = {}
 
@@ -328,12 +342,16 @@ class GenoshaDecoder ( object ) :
     builders = { list : list.extend, set : set.update, dict : dict.update, defaultdict : dict.update, deque : deque.extend }
     immutables = set( [ tuple, frozenset, complex ] )
 
-    def create_object ( self, data ) :
+    def _object ( self, data ) :
         immediate = not hasattr( data, 'oid' )
         if hasattr( data, 'attribute' ) :
             obj = getattr( self._unmarshal( data.instance ), data.attribute )
         else :
-            kind = self.resolve_type( data.type )
+            if data.type in self.kinds :
+                kind = self.kinds[data.type]
+            else :
+                kind = self.resolve_type( data.type )
+                self.kinds[data.type] = kind
             if not hasattr( data, 'items' ) and not hasattr( data, 'fields' ) :
                 obj = kind # raw type
             else :
@@ -352,30 +370,32 @@ class GenoshaDecoder ( object ) :
         return obj
 
     def populate_object ( self, obj, data ) :
+        _unmarshal = self._unmarshal
         if hasattr( data, 'items' ) :
+            builders = self.builders
             for base in obj.__class__.__mro__ :
-                if base in self.builders :
-                    self.builders[ base ]( obj, self._unmarshal( data.items ) )
+                if base in builders :
+                    builders[ base ]( obj, _unmarshal( data.items ) )
                     break
         if hasattr( data, 'fields' ) :
             if hasattr( obj, '__dict__' ) :
-                obj.__dict__.update( self._unmarshal( data.fields ) )
+                for key, value in data.fields.items() :
+                    obj.__dict__[key] = _unmarshal( value )
             else :  # __slots__ or descriptor based
                 for key, value in data.fields.items() :
-                    setattr( obj, self._unmarshal( key ), self._unmarshal( value ) )
+                    setattr( obj, key, _unmarshal( value ) )
         return obj
 
     def _list ( self, data ) :
-        return [ self._unmarshal( item ) for item in data ]
+        _unmarshal = self._unmarshal
+        return [ _unmarshal( item ) for item in data ]
 
     def _dict ( self, data ) :
         d = {}
+        _unmarshal = self._unmarshal
         for key, value in data.items() :
-            d[ self._unmarshal( key ) ] = self._unmarshal( value )
+            d[ _unmarshal( key ) ] = _unmarshal( value )
         return d
-
-    def _object ( self, data ) :
-        return self.create_object( data )
 
     def _reference ( self, data ) :
         try :
@@ -386,26 +406,18 @@ class GenoshaDecoder ( object ) :
     def _primitive ( self, data ) :
         return data
 
-    def _string ( self, data ) :
-        if self.string_hook :
-            return self.string_hook( self, data )
-        return data
-
     dispatch = { list : _list, dict : _dict, GenoshaObject : _object, GenoshaReference : _reference
         , int : _primitive, long : _primitive, float : _primitive, bool : _primitive, types.NoneType : _primitive
-        , str : _string, unicode : _string }
+        , str : _primitive, unicode : _primitive }
 
     def _unmarshal ( self, data ) :
         return self.dispatch[type(data)]( self, data )
 
     def resolve_type ( self, kind ) :
-        if kind in self.kinds :
-            return self.kinds[kind]
         modname, kind = kind.split( '/' ) if '/' in kind else ( kind, '' )
         if modname not in sys.modules :
             __import__( modname )
         scope = sys.modules[ modname ]
         for name in kind.split('.') :
             scope = getattr( scope, name ) if name else scope
-        self.kinds[kind] = scope
         return scope

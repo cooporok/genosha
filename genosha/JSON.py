@@ -124,16 +124,16 @@ def _genosha_to_json( obj ) :
 def _json_to_genosha( data ) :
     if "@o" in data or "@t" in data :
         return GenoshaObject( **dict( ( _jsonunmap[k], v ) for k, v in data.items() ) )
-    return data # fall back to returning the directory.
+    return data # fall back to returning the dictionary.
 
 def _json_escape_string ( obj, root = False ) :
-    if obj.startswith( "<" ) :
+    if len( obj ) and obj[0] == "<" :
         return obj[0] + obj
     return obj
 
 def _json_unescape_string ( self, obj ) :
-    if obj.startswith( "<" ) :
-        if obj.startswith ( "<@" ) : # reference, to get around the lack of decode hooks in the json decoder for primitives.
+    if len( obj ) and obj[0] == "<" :
+        if obj[1] == "@" :
             return self._unmarshal( GenoshaReference( int( obj.split( '@' )[-2] ) ) )
         return obj[1:]
     return obj
