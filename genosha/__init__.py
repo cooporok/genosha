@@ -153,8 +153,12 @@ class GenoshaEncoder ( object ) :
     def _id ( self, obj ) :
         return self.python_ids.setdefault( id( obj ), len( self.python_ids ) + 1 )
 
-    def _items ( self, obj, klass, iterator, simple = True ) :
-        return klass( self._marshal( item ) if simple else ( self._marshal( item[0] ), self._marshal( item[1] ) ) for item in iterator( obj ) )
+    #def _items ( self, obj, klass, iterator, simple = True ) :
+    #    return klass( self._marshal( item ) if simple else ( self._marshal( item[0] ), self._marshal( item[1] ) ) for item in iterator( obj ) )
+    def _sequence ( self, obj, iterator ) :
+        return list( self._marshal( item ) for item in iterator( obj ) )
+    def _map ( self, obj, iterator ) :
+        return dict( ( self._marshal( item[0] ), self._marshal( item[1] ) ) for item in iterator( obj ) )
 
     def _object ( self, obj, out, items_func, attributes, is_instance ) :
         if items_func is not None :
@@ -167,7 +171,8 @@ class GenoshaEncoder ( object ) :
         if attributes :
             fields.update( attributes )
         if is_instance :
-            out.fields = self._items( fields, dict, dict.items, simple = False )
+            #out.fields = self._items( fields, dict, dict.items, simple = False )
+            out.fields = self._map( fields, dict.items )
         return out
 
     def marshal_object ( self, obj, items = None, immutable = False, kind = None, attributes = None ) :
@@ -185,25 +190,32 @@ class GenoshaEncoder ( object ) :
         return self.reference_hook( oid )
 
     def marshal_list ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, list.__iter__ ) )
+        #return self.marshal_object( obj, lambda: self._items( obj, list, list.__iter__ ) )
+        return self.marshal_object( obj, lambda: self._sequence( obj, list.__iter__ ) )
 
     def marshal_tuple ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, tuple.__iter__ ), immutable = True )
+        #return self.marshal_object( obj, lambda: self._items( obj, list, tuple.__iter__ ), immutable = True )
+        return self.marshal_object( obj, lambda: self._sequence( obj, tuple.__iter__ ), immutable = True )
 
     def marshal_dict ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._items( obj, dict, dict.items, simple = False ) )
+        #return self.marshal_object( obj, lambda: self._items( obj, dict, dict.items, simple = False ) )
+        return self.marshal_object( obj, lambda: self._map( obj, dict.items ) )
 
     def marshal_set ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, set.__iter__ ) )
+        #return self.marshal_object( obj, lambda: self._items( obj, list, set.__iter__ ) )
+        return self.marshal_object( obj, lambda: self._sequence( obj, set.__iter__ ) )
 
     def marshal_frozenset ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, frozenset.__iter__ ), immutable = True )
+        #return self.marshal_object( obj, lambda: self._items( obj, list, frozenset.__iter__ ), immutable = True )
+        return self.marshal_object( obj, lambda: self._sequence( obj, frozenset.__iter__ ), immutable = True )
 
     def marshal_defaultdict ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._items( obj, dict, defaultdict.items, simple = False ), attributes = { 'default_factory' : obj.default_factory } )
+        #return self.marshal_object( obj, lambda: self._items( obj, dict, defaultdict.items, simple = False ), attributes = { 'default_factory' : obj.default_factory } )
+        return self.marshal_object( obj, lambda: self._map( obj, defaultdict.items ), attributes = { 'default_factory' : obj.default_factory } )
 
     def marshal_deque ( self, obj ) :
-        return self.marshal_object( obj, lambda: self._items( obj, list, deque.__iter__, ) )
+        #return self.marshal_object( obj, lambda: self._items( obj, list, deque.__iter__, ) )
+        return self.marshal_object( obj, lambda: self._sequence( obj, deque.__iter__, ) )
 
     def marshal_instancemethod ( self, obj ) :
         oid = self._id( obj )
@@ -245,11 +257,12 @@ class GenoshaEncoder ( object ) :
     def _marshal ( self, obj ) :
         if id( obj ) in self.python_ids :
             return self.reference_hook( self._id( obj ) )
-        if type( obj ) in self.primitives :
+        typ = type( obj )
+        if typ in self.primitives :
             return obj
-        if type( obj ) in self.unsupported :
-            raise TypeError, "'%s' is an unsupported type." % type( obj ).__name__
-        for kind in inspect.getmro( obj.__class__ ) :
+        if typ in self.unsupported :
+            raise TypeError, "'%s' is an unsupported type." % typ.__name__
+        for kind in typ.__mro__ :
             if kind in self.builtin_types :
                 return getattr( self, "marshal_" + kind.__name__ )( obj )
         return self.marshal_object( obj )
