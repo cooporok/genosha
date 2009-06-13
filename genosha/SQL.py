@@ -15,135 +15,187 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 r"""genosha/SQL.py is a serialization/deserialization wrapper for the :mod:`genosha`
 marshalling library.  It provides functions similar to those found in :mod:`pickle` or
-:mod:`json` but the output is managed through an sqllite file.
+:mod:`json` but the output is managed through an sqlite3 db.
 
 The public interface should be very familiar to anyone who has used the :mod:`json`,
 :mod:`pickle` or mod:`marshal` modules.  Marshalling objects this way is somewhat more
 human-readable and editable than pickle files are.
 
-For now this is really a toy example of how relatively straightforward it is to create
+This module is basically a toy example of how relatively straightforward it is to create
 serialization wrappers for Genosha.  Most practical uses would require wrapping to map
 to your own project's table structure or db target.
 
 To be sure: this implementation is incredibly inefficient in its use of SQL; a real example
-would batch much more."""
+would combine inserts or selects for greater efficiency."""
+from __future__ import with_statement
+
 from genosha import GenoshaObject, GenoshaReference, GenoshaEncoder, GenoshaDecoder
 
 import sqlite3
 
 __version__ = "0.1"
 __author__ = "Shawn Sulma <genosha@470th.org>"
-__all__ = [ 'marshal', 'unmarshal', 'dumps', 'dump', 'loads', 'load' ]
+__all__ = [ 'marshal', 'unmarshal', 'dumpc', 'dump', 'loadc', 'load' ]
 
-def create_tables ( conn ) :
-    __slots__ = ( 'type', 'oid', 'fields', 'items', 'attribute', 'instance' )
-    conn.execute( '''create table object ( obj_id integer, type text, instance_id integer, attribute text, fields_id integer, items_id integer )''' )
-    conn.execute( '''create table sequence ( seq_id integer )''' )
-    conn.execute( '''create table sequence_item( seq_id integer, item_id integer )''' )
-    conn.execute( '''create table map ( map_id integer )''' )
-    conn.execute( '''create table map_item( map_id integer, key_id integer, value_id integer )''' )
-    conn.execute( '''create table item ( item_id integer, type text, data text )''' )
-
-def get_start_ids ( conn ) :
-    conn.execute( "select max( map_id ) from map" )
-    map_id = int( conn.fetchone()[0] )
-    conn.execute( "select max( seq_id ) from sequence" )
-    seq_id = int( conn.fetchone()[0] )
-    conn.execute( "select max( item_id ) from item" )
-    item_id = int( conn.fetchone()[0] )
-    return [ seq_id, map_id, item_id ]
-
-def marshal ( obj, conn ) :
+def marshal ( obj, cursor ) :
     _m = GenoshaEncoder().marshal( obj )
-    ids = get_start_ids( conn )
-    return encode( _m, conn, ids )
+    ids = get_start_ids( cursor )
+    id = encode( _m, cursor, ids )
+    return id
 
-def encode( data, conn, ids ) :
+def unmarshal ( id, cursor ) :
+    _d = decode( cursor, id )
+    return GenoshaDecoder().unmarshal( _d )
+
+def dump ( o, fn ) :
+    r"""Dump the passed object ``o`` (and its refererred object graph) to the sqlite db identified by ``fn``."""
+    conn = sqlite3.connect( fn )
+    try :
+        with conn :
+            dumpc( o, conn )
+    finally :
+        conn.close()
+
+def dumpc ( o, conn ) :
+    r"""Dump the passed object ``o`` (and its refererred object graph) to the passed sqlite connection object.  It does not commit the transaction."""
+    return marshal( o, conn.cursor() )
+
+def load ( i, fn ) :
+    r"""Load the object graph stored in the database named by ``fn``, starting at the item id ``i``."""
+    conn = sqlite.connect( fn )
+    try :
+        with conn :
+            return load( i, conn )
+    finally :
+        conn.close()
+
+def loadc ( i, conn ) :
+    r"""Load the object graph stored in the database accessed through the ``conn`` connection object."""
+    return unmarshal( i, conn.cursor() )
+
+
+def encode( data, cursor, ids ) :
     if type( data ) in encoders :
-        return encoders[type(data)]( data, conn, ids )
+        return encoders[type(data)]( data, cursor, ids )
     else :
         ids[2] += 1
-        id = ids[2]
-        conn.execute( 'INSERT into ITEM ( item_id, type, data ) values ( ?, ?, ? )', [ ( id, type( data ).__name__, str( data ) ) ] )
-        return id
+        item_id = ids[2]
+        cursor.execute( 'INSERT into ITEM ( item_id, type, data ) values ( ?, ?, ? )', [ item_id, type( data ).__name__, data ] )
+        return item_id
 
-def encode_list ( data, conn, ids ) :
-    ids[0] += 1
-    seq_id = ids[0]
+def encode_list ( data, cursor, ids ) :
     ids[2] += 1
     list_id = ids[2]
-    conn.execute( 'INSERT into SEQUENCE ( seq_id ) Values ( ? )', [ ( seq_id, ) ] )
-    conn.execute( 'INSERT into ITEM ( item_id, type, data ) values ( ?, ?, ? )', [ ( list_id, 'sequence', seq_id ) ] )
+    cursor.execute( 'INSERT into ITEM ( item_id, type, data ) values ( ?, ?, ? )', [ list_id, 'sequence', list_id ] )
+    ordinal = 0
     for item in data :
-        item_id = encode( item, conn, ids )
-        conn.execute( 'INSERT INTO SEQUENCE_ITEM ( seq_id, item_id ) VALUES ( ?, ? )', [ ( seq_id, item_id ) ] )
+        item_id = encode( item, cursor, ids )
+        cursor.execute( 'INSERT INTO SEQUENCE_ITEM ( seq_id, item_id, ordinal ) VALUES ( ?, ?, ? )', [ list_id, item_id, ordinal ] )
+        ordinal += 1
     return list_id
 
-def encode_dict ( data, conn, ids ) :
-    ids[1] += 1
-    map_id = ids[0]
+def encode_dict ( data, cursor, ids ) :
     ids[2] += 1
     dict_id = ids[2]
-    conn.execute( 'INSERT into MAP ( map_id ) Values ( ? )', [ ( map_id, ) ] )
-    conn.execute( 'INSERT into ITEM ( item_id, type, data ) values ( ?, ?, ? )', [ ( dict_id, 'map', map_id ) ] )
+    cursor.execute( 'INSERT into ITEM ( item_id, type, data ) values ( ?, ?, ? )', [ dict_id, 'map', dict_id ] )
     for key, value in data.items() :
-        key_id = encode( key, conn, ids )
-        value_id = encode( values, conn, ids )
-        conn.execute( 'INSERT INTO MAP_ITEM ( map_id, key_id, value_id ) VALUES ( ?, ?, ? )', [ ( map_id, key_id, value_id ) ] )
-    return map_id
+        key_id = encode( key, cursor, ids )
+        value_id = encode( value, cursor, ids )
+        cursor.execute( 'INSERT INTO MAP_ITEM ( map_id, key_id, value_id ) VALUES ( ?, ?, ? )', [ dict_id, key_id, value_id ] )
+    return dict_id
 
-def encode_object ( data, conn, ids ) :
+def encode_object ( data, cursor, ids ) :
     ids[2] += 1
     item_id = ids[2]
-    d = [ data.oid ]
-    f = [ "obj_id" ]
+    d = [ item_id, data.oid ]
+    f = [ "item_id", "obj_id" ]
     for attrib in ( 'type', 'attribute' ) :
         if hasattr( data, attrib ) :
             d.append( str( getattr( data, attrib ) ) )
-            f.append( "type" )
+            f.append( attrib )
     if hasattr( data, 'instance' ) :
-        d.append( encode( data.attrib, conn, ids ) )
-        f.append( "instance" )
+        d.append( encode( data.instance, cursor, ids ) )
+        f.append( "instance_id" )
     if hasattr( data, 'items' ) :
-        d.append( encode( data.items, conn, ids ) )
+        d.append( encode( data.items, cursor, ids ) )
         f.append( "items_id" )
     if hasattr( data, 'fields' ) :
-        d.append( encode( data.fields, conn, ids ) )
+        d.append( encode( data.fields, cursor, ids ) )
         f.append( "fields_id" )
-    conn.execute( "INSERT into OBJECT ( " + ", ".join( f ) + " ) VALUES ( " + ", ".join( [ "?" * len( f ) ] ) + " ) ", [ d ] )
-    conn.execute( "INSERT into ITEM ( item_id, type, data ) VALUES ( ?, ?, ? )", [ ( item_id, 'object', data.oid ) ] )
+    cursor.execute( "INSERT into object_item ( " + ", ".join( f ) + " ) VALUES ( " + ", ".join( [ "?" ] * len( f ) ) + " ) ", d )
+    cursor.execute( "INSERT into ITEM ( item_id, type, data ) VALUES ( ?, ?, ? )", [ item_id, 'object', item_id ] )
     return item_id
 
-def encode_reference ( data, conn, ids ) :
+def encode_reference ( data, cursor, ids ) :
     ids[2] += 1
     item_id = ids[2]
-    conn.execute( "INSERT INTO ITEM ( item_id, type, data ) values ( ?, ?, ? )", [ ( item_id, 'reference', data.oid ) ] )
+    cursor.execute( "INSERT INTO ITEM ( item_id, type, data ) values ( ?, ?, ? )", [ item_id, 'reference', data.oid ] )
     return item_id
 
-encoders = { GenoshaObject : encode_object, GenoshaReference : encode_reference, list : encode_list, dict : encode_map }
+encoders = { GenoshaObject : encode_object, GenoshaReference : encode_reference, list : encode_list, dict : encode_dict }
 
-def unmarshal ( xmldoc ) :
-    return GenoshaDecoder().unmarshal( decode( xmldoc ) )
+def decode ( cursor, item_id ) :
+    item_id = int( item_id )
+    cursor.execute( "SELECT item_id, type, data from ITEM WHERE item_id = ? order by item_id", ( item_id, ) )
+    item = cursor.fetchone()
+    d = decoders[item[1]]( cursor, item[2] )
+    return d
 
-def dumps ( o ) :
-    r"""Dump the passed object ``o`` (and its refererred object graph) as XML which
-    is returned as a string."""
-    return ET.tostring( marshal( o ).getroot() )
+def decode_sequence ( cursor, seq_id ) :
+    seq_id = int( seq_id )
+    lst = []
+    cursor.execute( "SELECT item_id from SEQUENCE_ITEM where seq_id = ? order by ordinal ", ( seq_id, ) )
+    for row in cursor.fetchall() :
+        lst.append( decode( cursor, row[0] ) )
+    return lst
 
-def dump ( o, f ) :
-    r"""Dump the passed object ``o`` (and its refererred object graph) as XML which
-    is written to the file-like object ``f`` (which has a .write method)."""
-    marshal( o ).write( f )
+def decode_map ( cursor, map_id ) :
+    map_id = int( map_id )
+    dct = {}
+    cursor.execute( "SELECT key_id, value_id from MAP_ITEM where map_id = ? ", ( map_id, ) )
+    for row in cursor.fetchall() :
+        dct[decode( cursor, row[0] )] = decode( cursor, row[1] )
+    return dct
 
-def loads ( s ) :
-    r"""Convert the passed XML string ``s`` back into Python objects with their
-    cross references restored."""
-    return unmarshal( ET.fromstring( s ) )
+def decode_reference ( cursor, ref_id ) :
+    return GenoshaReference( int( ref_id ) )
 
-def load ( f ) :
-    r"""Read an XML document from the file-like object ``f`` and converts it back into
-    Python objects with their cross references restored."""
-    return unmarshal( ET.parse( f ) )
+def decode_object ( cursor, item_id ) :
+    item_id = int( item_id )
+    cursor.execute( "SELECT obj_id, type, instance_id, attribute, fields_id, items_id FROM object_item where item_id = ?", ( item_id, ) )
+    obj_id, kind, instance, attribute, fields, items = cursor.fetchone()
+    obj = GenoshaObject( oid = obj_id, type = kind )
+    if instance :
+        obj.instance = decode( cursor, instance )
+    if attribute :
+        obj.attribute = attribute
+    if fields :
+        obj.fields = decode( cursor, fields )
+    if items :
+        obj.items = decode( cursor, items )
+    return obj
 
-primitives = { 'int' : int, 'str' : str, 'unicode' : unicode, 'float' : float, 'long' : long, 'bool' : bool, 'NoneType' : lambda x : None }
+decoders = { 'int' : lambda c, d : int(d)
+    , 'long' : lambda c, d : long(d)
+    , 'float' : lambda c, d : float(d)
+    , 'bool' : lambda c,d : bool(d)
+    , 'unicode' : lambda c,d : unicode(d)
+    , 'str' : lambda c,d : str(d)
+    , 'NoneType' : lambda c,d : None
+    , 'object' : decode_object
+    , 'reference' : decode_reference
+    , 'sequence' : decode_sequence
+    , 'map' : decode_map }
+
+def create_tables ( cursor ) :
+    cursor.execute( '''create table object_item ( item_id integer, obj_id integer, type text, instance_id integer, attribute text, fields_id integer, items_id integer )''' )
+    cursor.execute( '''create table sequence_item( seq_id integer, item_id integer, ordinal integer )''' )
+    cursor.execute( '''create table map_item( map_id integer, key_id integer, value_id integer )''' )
+    cursor.execute( '''create table item ( item_id integer, type text, data text )''' )
+    return cursor
+
+def get_start_ids ( cursor ) :
+    cursor.execute( "select max( item_id ) from item" )
+    item_id = int( cursor.fetchone()[0] or 0 )
+    return [ 0, 0, item_id ]
 
